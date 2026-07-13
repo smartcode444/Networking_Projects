@@ -2,11 +2,12 @@ import socket
 import asyncio 
 import os
 
-selected_device = ""
+# selected_device = ""
 devices = {}
 # Create a signal to notify the background task when to stop
 stop_signal = asyncio.Event()
 
+# Constants
 UDP_PORT = 5005
 TCP_PORT = 8888
 CLEAR_COMMAND = "cls" if os.name == "nt" else clear
@@ -22,7 +23,7 @@ def get_single_char():
         import msvcrt
         return msvcrt.getch().decode('utf-8')
     else:
-        import tty, termios
+        import tty, termios, sys
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
@@ -46,7 +47,7 @@ def recieve_file(connection, filename):
                 chunk = connection.recv(4096)
 
                 if not chunk:
-                    connection.close() # No more data means the file is finished 
+                    # connection.close() # No more data means the file is finished 
                     break 
 
                 file.write(chunk)
@@ -67,7 +68,7 @@ def send_file(server, filename):
                 chunk = file.read(4096)
 
                 if not chunk:
-                    server.close()
+                    # server.close()
                     break
 
                 server.sendall(chunk)
@@ -85,29 +86,47 @@ def shutdown_server(server):
     print("TCP Server closed")
 
 async def scan_devices(server):
-    data, address = server.recvfrom(1024)
+    loop = asyncio._get_running_loop()
+    data, address = await loop.run_in_executor(None, server.recvfrom, 1024)
     # Recieve client_name and boradcast message "XENDER_DISCOVERY_REQUEST"
-    client_username = data[0]
-    client_msg      = data[1]
-  a  # I have not decode the message
+    username_len       = data[0]
+    client_username    = data[1:1+username_len].decode('utf-8')
+    client_msg         = data[1+username_len:].decode('utf-8')
+  
     if client_msg == "XENDER_DISCOVERY_REQUEST" and client_username not in devices:
-        message = b"I_SEE_U"
         # Send a I see you message so the the device can know if it should initiate its tcp server
-        server.sendto(message, (address[0], UDP_PORT))
-    print(f"[UDP] Ignored duplicate request from {client_username}")
+        server.sendto(b"I_SEE_U", (address[0], UDP_PORT))
+        return client_username, address
+    return None, None
+    # print(f"[UDP] Ignored duplicate request from {client_username}")
 
 async def scanning_loop(server):
-    """This run continously in tthe background"""
+    """This run continously in the background"""
+    # global devices
     while not stop_signal.is_set():
-        client_name, address = await scan_devices(server)
-        devices[client_name] = address
+        # Use asyncio.wait_for with a timeout to allow checking the signal
+        try:
+            client_name, address = await asyncio.wait_for(scan_devices(server), timeout=1.0)
 
-        # Clear screen and update display
-        clear_console()
-        print("Available devices: ")
-        for username, addr in devices.items():
-            print(f"{username} [addr: {addr}]")
-        print("Stop scanning (y/n)?")
+            if client_name == None or address == None:
+                continue
+
+            devices[client_name] = address
+
+            # Clear screen and update display
+            clear_console()
+
+            # Parse and process data
+            print("Available devices: ")
+            for username, addr in devices.items():
+                print(f"{username} [addr: {addr}]")
+            print("Stop scanning (y/n)?")
+
+        except asyncio.TimeoutError:
+            continue
+
+        except OSError: # Socket closed
+            break
 
 async def input_loop():
     typed_text = "" 
@@ -115,7 +134,7 @@ async def input_loop():
         # Oflload the blocking function to a seperate thread
         char = await asyncio.to_thread(get_single_char)
         if char in ('\r', '\n'):
-            break
+            return typed_text
         elif char in ('\x08', '\x7f'):
             if len(typed_text) > 0:
                 typed_text = typed_text[:-1]
@@ -125,14 +144,16 @@ async def input_loop():
             print(char, end='', flush=True)
 
 
-async def send():
+async def send(CLIENT_USERNAME):
     clear_console()
+    selected_device = None
 
     # Create a UDP socket
     udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # Listen on all local network interfaces 5005
     udp_server.bind(('', UDP_PORT))
+    udp_server.setblocking(False)
     print("Listening for nearby devices...")
 
     scan_task = asyncio.create_task(scanning_loop(udp_server))
@@ -140,14 +161,16 @@ async def send():
     # Main loop waits for user input while scanning happens concurrently
     while True:
         choice = await input_loop()
-        choice = choice.strip.lower()
+        choice = choice.strip().lower()
         if choice in devices:
             selected_device = choice
             print(f"You have selected device: {selected_device}")
         
-            # stop_signal.set()
+            stop_signal.set()
             udp_server.close()
             break
+        else:
+            continue
 
     await scan_task
 
@@ -186,9 +209,9 @@ async def send():
 
         finally:
             if is_conn:    
-                shutdown_server(tcp_server)
+                tcp_server.close()
 
-async def recieve():
+async def recieve(CLIENT_USERNAME):
     # Create TCP Socket
     tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -204,19 +227,33 @@ async def recieve():
 
     # Enable the socket to send broadcast messages
     udp_server.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    udp_server.settimeout(1.0)
+    udp_server.setblocking(False)
     # Shout to the whole network on a specific port 5005
-    message = b"SENDER_DISCOVERY_REQUEST" # Change to sen
+    username_bytes = CLIENT_USERNAME.encode('utf-8')
+    message = bytes([len(username_bytes)]) + username_bytes + b"XENDER_DISCOVERY_REQUEST"
     
-    while True:
-        udp_server.sendto(message, ('255.255.255.255', UDP_PORT))
-        print("Broadcast message sent")
+    try: 
+        print("Broadcasting...")
+        while True:
+            try:
+                udp_server.sendto(message, ('255.255.255.255', UDP_PORT))
+                # print("Broadcast message sent")
 
-        data, address = udp_server.recvfrom(1024)
-        if data.decode('utf-8').strip == "I_SEE_U":
-            choice = input(f"Aceept connection from {address[0]}:{address[1]}(y/n)?")
-            if choice.strip().lower() == "y":
-                udp_server.close()
-                break
+                data, address = udp_server.recvfrom(1024)      #  -> Need to make asynchronous
+                if data.decode('utf-8').strip() == "I_SEE_U":
+                    choice = input(f"Accept connection from {address[0]}:{address[1]}(y/n)?")
+                    if choice.strip().lower() == "y":
+                        udp_server.close()
+                        break
+                    
+            except socket.timeout:
+                continue
+
+    except KeyboardInterrupt:
+        print("\n[*] Keyboard interrupt detected, Shutting down!")
+        udp_server.close()
+        return
 
     is_conn = False
     try:
@@ -226,11 +263,12 @@ async def recieve():
                     
                 # Accept the incoming connection from the sender
                 connection, sender_addr = tcp_server.accept()
+                connection.settimeout(1.0)
                 is_conn = True
                 print(f"Connected to sender: {sender_addr[0]}:{sender_addr[1]}")
 
                 # Send "mp4" file
-                send_file(connection, "recieved.mp4")
+                recieve_file(connection, "recieved.mp4")
                 break
 
             except socket.timeout:
@@ -243,60 +281,80 @@ async def recieve():
 
     finally:
         if is_conn:    
-            shutdown_server(connection)
+            # shutdown_server(connection)
+            tcp_server.close()
 
 
 # Will soon replace main
-
-def main():
-    # Create TCP Socket
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    # Bind the port 8888 and start listening for connections
-    server.bind(('', TCP_PORT))
-    server.listen(1)
-    server.settimeout(1.0) # Prevent accept()/recv() from blocking Ctrl + C indefinitely
-    print("TCP Server is ready and waiting...")
-
-
-    # Create a UDP socket
-    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-    # Enable the socket to send broadcast messages
-    client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    # Shout to the whole network on a specific port 5005
-    message = b"XENDER_DISCOVERY_REQUEST"
-    client.sendto(message, ('255.255.255.255', UDP_PORT))
-    print("Broadcast message sent")
-
-    client.close()
-
-    is_conn = False
-    try:
-        print("Waiting for the sender to connect back...")
-        while True:
-            try:
-                    
-                # Accept the incoming connection from the sender
-                connection, sender_addr = server.accept()
-                is_conn = True
-                print(f"Connected to sender: {sender_addr[0]}:{sender_addr[1]}")
-
-                # Send "mp4" file
-                send_file(connection, "recieved.mp4")
-                break
-
-            except socket.timeout:
-                # Timeout hit without a connection ; loop loop continues and checks 
-                # for Ctrl + C
-                continue
-
-    except KeyboardInterrupt:
-        print("\n[*] Keyboard interrupt detected, Shutting down!")
-
-    finally:
-        if is_conn:    
-            shutdown_server(connection)
+async def main():
+    # global CLIENT_USERNAME
+    print("Welcome to smartcode version of [Xender]")
+    CLIENT_USERNAME = input("Enter username: ")
+    print(f"Welcome {CLIENT_USERNAME}")
+    print("[1]Send \n[2]Recieve \n[3]Close")
+    while True:
+        choice  = input(": ")
+        if choice == "1":
+            await send(CLIENT_USERNAME)
+            break
+        elif choice == "2":
+            await recieve(CLIENT_USERNAME)
+            break
+        elif choice == "3":
+            print("Thank you for using smart_xender!")
+            break
+        else:
+            print("Invalid input, Try again")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
+
+
+    # # Create TCP Socket
+    # server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    # # Bind the port 8888 and start listening for connections
+    # server.bind(('', TCP_PORT))
+    # server.listen(1)
+    # server.settimeout(1.0) # Prevent accept()/recv() from blocking Ctrl + C indefinitely
+    # print("TCP Server is ready and waiting...")
+
+
+    # # Create a UDP socket
+    # client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    # # Enable the socket to send broadcast messages
+    # client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    # # Shout to the whole network on a specific port 5005
+    # message = b"XENDER_DISCOVERY_REQUEST"
+    # client.sendto(message, ('255.255.255.255', UDP_PORT))
+    # print("Broadcast message sent")
+
+    # client.close()
+
+    # is_conn = False
+    # try:
+    #     print("Waiting for the sender to connect back...")
+    #     while True:
+    #         try:
+                    
+    #             # Accept the incoming connection from the sender
+    #             connection, sender_addr = server.accept()
+    #             is_conn = True
+    #             print(f"Connected to sender: {sender_addr[0]}:{sender_addr[1]}")
+
+    #             # Send "mp4" file
+    #             send_file(connection, "recieved.mp4")
+    #             break
+
+    #         except socket.timeout:
+    #             # Timeout hit without a connection ; loop loop continues and checks 
+    #             # for Ctrl + C
+    #             continue
+
+    # except KeyboardInterrupt:
+    #     print("\n[*] Keyboard interrupt detected, Shutting down!")
+
+    # finally:
+    #     if is_conn:    
+    #         shutdown_server(connection)
