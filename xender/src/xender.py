@@ -30,7 +30,7 @@ def get_broadcast_address():
 
 
 def key_pressed() -> bool | str:
-    """Reeturn the character if a key was pressed, else None."""
+    """Return the character if a key was pressed, else None."""
     if os.name == 'nt':
         import msvcrt
         if msvcrt.kbhit():
@@ -158,6 +158,7 @@ class NetworkManager:
 
         try:
             while True:
+
                 key = key_pressed()
                 if key and key.lower() == 'q':
                     print("\nScanning stopped by user")
@@ -178,7 +179,8 @@ class NetworkManager:
                     if client_msg == "XENDER_DISCOVERY_REQUEST" and client_name not in devices:
                         self.udp_socket.sendto(msg, (address))
                         devices[client_name] = address
-                        print(f"Devices: {devices}")
+                        print(f"Found {len(devices)} (press 'q' to stop scanning)")
+
                 except socket.timeout:
                     continue
 
@@ -190,33 +192,19 @@ class NetworkManager:
             
         return devices
 
-    def connect(self, devices: dict) -> bool:
-        print("\nAvailabe devices: ")
-        for index, (name, address) in enumerate(devices.items(), start=1):
-            print(f"[{index}] Device [{name}]")
-        while True:
-            try:
-                sel_num    = int(input("Which device would you like to connect to? "))
-                if sel_num < 1 or sel_num > len(devices):
-                    continue
-                sel_device = list(devices.keys())[sel_num - 1]
-                break
-
-            except ValueError:
-                continue
-
-        print(f"Connecting to {sel_device}")
+    def connect(self, device_addr, device_name) -> bool:
+        
+        print(f"Connecting to {device_name}")
 
         while True:
             try:
                 self.tcp_client_socket.settimeout(1.0)
-                self.tcp_client_socket.connect((devices[sel_device][0], self.TCP_PORT))
-                print(f"Succesfully connected to {sel_device}")
+                self.tcp_client_socket.connect((device_addr, self.TCP_PORT))
+                print(f"Succesfully connected to {device_name}")
                 return True
 
             except socket.timeout:
                 # print("20s has elapsed")
-                # return False
                 continue
 
             except Exception as e:
@@ -230,21 +218,21 @@ class NetworkManager:
         self.tcp_client_socket.send(b'\x02')
     
 
-    def _send_file(self, path):
+    def _send_file(self, name, path):
         """Send file"""
-        name = os.path.basename(path)
         # Send command: 0x01 = file transfer
         self.tcp_client_socket.send(b'\x01')
         
         # Send filename length (4 bytes, big‑endian) and filename
         name_bytes = name.encode('utf-8')
         self.tcp_client_socket.send(len(name_bytes).to_bytes(4, 'big') + name_bytes)
-        
+
+        # Send file name         
         file_size = os.path.getsize(path)
         self.tcp_client_socket.send(file_size.to_bytes(4, 'big'))
 
         # Send file data
-        print(f"Sending {name}...")
+        # print(f"Sending {name}...")
         try:
             with open(path, "rb") as file:
                 sent = 0
@@ -257,7 +245,6 @@ class NetworkManager:
                 print(f"File: {name} sent successfully!")
 
         except KeyboardInterrupt:
-            print("\n[*] Keyboard interrupt detected, File transfer is terminated!")            
             raise KeyboardInterrupt
         
         except Exception:
@@ -266,10 +253,10 @@ class NetworkManager:
     def recv_bytes(self, no_bytes):
         return self.tcp_client_socket.recv(no_bytes)
 
-    def send_bytes(self, no_bytes):
-        return self.tcp_client_socket.send(no_bytes)
+    def send_bytes(self, bytes):
+        return self.tcp_client_socket.send(bytes)
     
-    def _recieve_file(self):
+    def _recieve_file(self, dest_folder):
         """Recieve files"""
         while True:
             cmd = self.recv_bytes(1)
@@ -304,7 +291,7 @@ class NetworkManager:
 
                 # Recieve file
                 print(f"Recieving {filename} ({file_size/(1024*1024):.2f} MB)....") 
-                with open(filename, "wb") as file:
+                with open(dest_folder + '/' +  filename, "wb") as file:
                     recieved = 0
                     while recieved < file_size:
                         try:
@@ -342,9 +329,10 @@ class ConsoleView:
         while True:
             try:
                 key = key_pressed()
-                sel = int(key)
-                if 1 <= sel <= max_num:
-                    return sel
+                if key:
+                    sel = int(key)
+                    if 1 <= sel <= max_num:
+                        return sel
             except ValueError:
                 continue
 
@@ -376,7 +364,7 @@ class XenderController():
                 if devices:
                     idx = self.view.get_selection(len(devices))
                     selected_name = list(devices.keys())[idx-1]
-                    if self.model.connect(devices[selected_name][0]):
+                    if self.model.connect(devices[selected_name][0], selected_name):
                         self.view.show_message(f"Connected to {selected_name}")
                         self.transfer_loop()
                 else:
@@ -405,18 +393,20 @@ class XenderController():
                 return
 
             # Cannot send more than 99 files
-            self.model.send_bytes(bytes(len(file_paths)))
+            no_files = str(len(file_paths)).encode('utf-8')
+            self.model.send_bytes(no_files)
             
             for file_obj in file_paths:
                 name = os.path.basename(file_obj.name)
                 path = file_obj.name
                 try:
+                    self.view.show_message(f"Sending {name}...")
                     self.model._send_file(name, path)
                 except KeyboardInterrupt:
                     self.view.show_message(f"[*] Keyboard Interrupt detected, Transfer of {name} is terminated")
                     continue
                 except Exception as e:
-                    self.view.show_message(f"Error sending {name}:")
+                    self.view.show_message(f"Error sending {name}: {e}")
             self.model._send_end()
 
     def try_recieve(self):
@@ -424,28 +414,31 @@ class XenderController():
             # Prompt user for destination folder
             dest_folder = filedialog.askdirectory(title="Select destination folder")
             if dest_folder:
-                self.view.show(f"Destination folder {dest_folder}")
+                self.view.show_message(f"Destination folder {dest_folder}")
             else:
-                self.view.show(f"Invalid Destination folder")
+                self.view.show_message(f"Invalid Destination folder")
             # Recieve the number of files to recieve
-            bytes = self.model.recv_bytes()
+            bytes = self.model.recv_bytes(2)
             no_files = int(bytes.decode('utf-8'))
+            self.view.show_message(f"Number of fies to recieve {no_files}")
             while no_files > 0:
                 no_files -= 1 
                 try:
-                    self.view.show_message(self._recieve_file(dest_folder))
+                    self.view.show_message(self.model._recieve_file(dest_folder))
                 except Exception as e:
                     self.view.show_message(f"Error: {e}")
 
     def transfer_loop(self):
         """Transfer files"""
         while True:
-            self.view.show_message("\n[1] Send files \n[2] Recieve files \n[3] Backe to main")
-            sel = self.view.get_selection()
-            if sel and sel == 1:
+            self.view.show_message("\n[1] Send files \n[2] Recieve files \n[3] Back to main")
+            sel = self.view.get_selection(3 )
+            if   sel == 1:
                 self.try_send()
-            elif sel and sel == 2:
+            elif sel == 2:
                 self.try_recieve()
+            elif sel == 3:
+                break
 
 
 if __name__ == "__main__":

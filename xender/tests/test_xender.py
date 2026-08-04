@@ -1,8 +1,7 @@
 import socket
 import os 
 import sys
-import os
-import sys
+
 
 # Get the directory of the current script (utils/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -11,8 +10,7 @@ parent_dir = os.path.dirname(current_dir)
 # Add the parent directory to Python's search path
 sys.path.append(parent_dir)
 # 4. Import from the folder using 'from folder.file import function'
-from src.xender import mySocket
-
+from src.xender import NetworkManager, ConsoleView, XenderController
 
 def log(message):
     print(message)
@@ -59,18 +57,26 @@ def connect_socket():
     log("\n(ACCEPT) TCP socket connected")
     return tcp_client_socket
 
-mysocket = mySocket("victor")
+xender = XenderController("victor")
+
 print("(1) Listening socket \n(2) Accepting socket \n(3) Exit")
 while True:
     key = key_pressed()
     if key and key.lower() == '1':
-        mysocket.tcp_client_socket = listening_socket()
+        xender.model.tcp_client_socket = listening_socket()
         break
     elif key and key.lower() == '2':
-        mysocket.tcp_client_socket = connect_socket()
+        xender.model.tcp_client_socket = connect_socket()
         break
     elif key and key.lower() == '3':
         sys.exit()
-
-mysocket.transfer_files()
+try:
+    xender.transfer_loop()
+finally:
+    if xender.model.tcp_client_socket:
+        xender.model.tcp_client_socket.close()
+    if xender.model.tcp_socket:
+        xender.model.tcp_socket.close()
+    if xender.model.udp_socket:
+        xender.model.udp_socket.close()
 

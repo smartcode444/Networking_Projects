@@ -10,7 +10,7 @@ stop_signal = asyncio.Event()
 # Constants
 UDP_PORT = 5005
 TCP_PORT = 8888
-CLEAR_COMMAND = "cls" if os.name == "nt" else clear
+CLEAR_COMMAND = "cls" if os.name == "nt" else "clear"
 
 def clear_console():
     """Clears the terminal screen."""
@@ -102,7 +102,7 @@ async def scan_devices(server):
 
 async def scanning_loop(server):
     """This run continously in the background"""
-    # global devices
+    global devices
     while not stop_signal.is_set():
         # Use asyncio.wait_for with a timeout to allow checking the signal
         try:
@@ -150,7 +150,7 @@ async def send(CLIENT_USERNAME):
 
     # Create a UDP socket
     udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
+    udp_server.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     # Listen on all local network interfaces 5005
     udp_server.bind(('', UDP_PORT))
     udp_server.setblocking(False)
@@ -229,18 +229,20 @@ async def recieve(CLIENT_USERNAME):
     udp_server.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     udp_server.settimeout(1.0)
     udp_server.setblocking(False)
+    loop = asyncio.get_running_loop()
+
     # Shout to the whole network on a specific port 5005
     username_bytes = CLIENT_USERNAME.encode('utf-8')
     message = bytes([len(username_bytes)]) + username_bytes + b"XENDER_DISCOVERY_REQUEST"
     
     try: 
-        print("Broadcasting...")
         while True:
             try:
+                print("Broadcasting...")
                 udp_server.sendto(message, ('255.255.255.255', UDP_PORT))
                 # print("Broadcast message sent")
 
-                data, address = udp_server.recvfrom(1024)      #  -> Need to make asynchronous
+                data, address = await loop.sock_recvfrom(udp_server, 1024) 
                 if data.decode('utf-8').strip() == "I_SEE_U":
                     choice = input(f"Accept connection from {address[0]}:{address[1]}(y/n)?")
                     if choice.strip().lower() == "y":
@@ -256,12 +258,10 @@ async def recieve(CLIENT_USERNAME):
         return
 
     is_conn = False
-    try:
+    try:  
         print("Waiting for the sender to connect back...")
         while True:
             try:
-                    
-                # Accept the incoming connection from the sender
                 connection, sender_addr = tcp_server.accept()
                 connection.settimeout(1.0)
                 is_conn = True
@@ -308,53 +308,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-    # # Create TCP Socket
-    # server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    # # Bind the port 8888 and start listening for connections
-    # server.bind(('', TCP_PORT))
-    # server.listen(1)
-    # server.settimeout(1.0) # Prevent accept()/recv() from blocking Ctrl + C indefinitely
-    # print("TCP Server is ready and waiting...")
-
-
-    # # Create a UDP socket
-    # client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-    # # Enable the socket to send broadcast messages
-    # client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    # # Shout to the whole network on a specific port 5005
-    # message = b"XENDER_DISCOVERY_REQUEST"
-    # client.sendto(message, ('255.255.255.255', UDP_PORT))
-    # print("Broadcast message sent")
-
-    # client.close()
-
-    # is_conn = False
-    # try:
-    #     print("Waiting for the sender to connect back...")
-    #     while True:
-    #         try:
-                    
-    #             # Accept the incoming connection from the sender
-    #             connection, sender_addr = server.accept()
-    #             is_conn = True
-    #             print(f"Connected to sender: {sender_addr[0]}:{sender_addr[1]}")
-
-    #             # Send "mp4" file
-    #             send_file(connection, "recieved.mp4")
-    #             break
-
-    #         except socket.timeout:
-    #             # Timeout hit without a connection ; loop loop continues and checks 
-    #             # for Ctrl + C
-    #             continue
-
-    # except KeyboardInterrupt:
-    #     print("\n[*] Keyboard interrupt detected, Shutting down!")
-
-    # finally:
-    #     if is_conn:    
-    #         shutdown_server(connection)
