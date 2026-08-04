@@ -70,6 +70,7 @@ while True:
         break
     elif key and key.lower() == '3':
         sys.exit()
+
 try:
     xender.transfer_loop()
 finally:
