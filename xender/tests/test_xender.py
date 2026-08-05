@@ -15,7 +15,7 @@ from src.xender import NetworkManager, ConsoleView, XenderController
 def log(message):
     print(message)
 
-def key_pressed() -> bool | str:
+def key_pressed() -> str | None:
     """Return the character if a key was pressed, else None."""
     if os.name == 'nt':
         import msvcrt
@@ -62,7 +62,7 @@ xender = XenderController("victor")
 print("(1) Listening socket \n(2) Accepting socket \n(3) Exit")
 while True:
     key = key_pressed()
-    if key and key.lower() == '1':
+    if key and key.lower()   == '1':
         xender.model.tcp_client_socket = listening_socket()
         break
     elif key and key.lower() == '2':
