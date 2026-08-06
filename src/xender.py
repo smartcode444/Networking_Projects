@@ -470,6 +470,7 @@ class XenderController():
                 if recv_file in done:
                     result = recv_file.result()
                     self.view.show_message(f"{result}")
+                    
                 elif key_pressed in done:
                     self.view.show_message("Recieving stopped by user.")
 
