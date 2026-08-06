@@ -1,7 +1,7 @@
 import socket
 import os 
 import sys
-
+import asyncio
 
 # Get the directory of the current script (utils/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -9,7 +9,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 # Add the parent directory to Python's search path
 sys.path.append(parent_dir)
-# 4. Import from the folder using 'from folder.file import function'
+# Import from the folder using 'from folder.file import function'
 from src.xender import NetworkManager, ConsoleView, XenderController
 
 def log(message):
@@ -29,6 +29,7 @@ def key_pressed() -> str | None:
         if rlist:
             return sys.stdin.read(1)
         return None
+
 
 PORT = 8888
 IP = "127.0.0.1"
@@ -72,7 +73,7 @@ while True:
         sys.exit()
 
 try:
-    xender.transfer_loop()
+    asyncio.run(xender.transfer_loop())
 finally:
     if xender.model.tcp_client_socket:
         xender.model.tcp_client_socket.close()
