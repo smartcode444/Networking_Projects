@@ -4,7 +4,6 @@ import tkinter as tk
 from tkinter import filedialog
 import os
 from datetime import datetime
-# import ifaddr
 import netifaces
 
 
@@ -28,6 +27,9 @@ def get_broadcast_address():
 #                     return broadcast
     return "255.255.255.255"  # fallback
 
+def start_hotspot():
+    """Starts hotspot on windows even when offline"""
+    pass
 
 def key_pressed() -> bool | str:
     """Reeturn the character if a key was pressed, else None."""
@@ -44,6 +46,35 @@ def key_pressed() -> bool | str:
             return sys.stdin.read(1)
         return None
 
+async def async_key_pressed() -> str | None:
+    """Return the character if a key was pressed, else None."""
+    if os.name == 'nt':
+        import msvcrt
+        while True:
+            try:
+                if msvcrt.kbhit():
+                    key = msvcrt.getch().decode('utf-8', errors='ignore')
+                    if key == 'q':
+                        return 
+
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                raise
+
+    else:
+        while True:
+            try:
+                # Unix
+                import select, sys
+                rlist, _, _ = select.select([sys.stdin], [], [], 0)
+                if rlist:
+                    key =  sys.stdin.read(1)
+                    if key == 'q':
+                        return 
+                    await asyncio.sleep(0.1)
+                return None
+            except asyncio.CancelledError:
+                raise
 
 class NetworkManager:
     def __init__(self, username: str):
@@ -230,9 +261,8 @@ class NetworkManager:
         self.tcp_client_socket.send(b'\x02')
     
 
-    def _send_file(self, path):
+    def _send_file(self, name, path):
         """Send file"""
-        name = os.path.basename(path)
         # Send command: 0x01 = file transfer
         self.tcp_client_socket.send(b'\x01')
         
@@ -269,7 +299,7 @@ class NetworkManager:
     def send_bytes(self, no_bytes):
         return self.tcp_client_socket.send(no_bytes)
     
-    def _recieve_file(self):
+    async def _recieve_file(self):
         """Recieve files"""
         while True:
             cmd = self.recv_bytes(1)
@@ -366,7 +396,7 @@ class XenderController():
         self.view = ConsoleView()
         self.running = True
 
-    def run(self):
+    async def run(self):
         while self.running:
             choice = self.view.show_menu()
             print(choice)
@@ -390,9 +420,10 @@ class XenderController():
                 self.running = False
                 self.model.udp_socket.close()
 
-                if hasattr(self.model, "tcp_client_socket"):
+                # if hasattr(self.model, "tcp_client_socket"):
+                #     self.model.tcp_client_socket.close()
+                if self.model.tcp_client_socket:
                     self.model.tcp_client_socket.close()
-
                 break
 
     def try_send(self):
@@ -419,36 +450,57 @@ class XenderController():
                     self.view.show_message(f"Error sending {name}:")
             self.model._send_end()
 
-    def try_recieve(self):
+    async def try_recieve(self):
             """Recieve files"""
             # Prompt user for destination folder
             dest_folder = filedialog.askdirectory(title="Select destination folder")
             if dest_folder:
-                self.view.show(f"Destination folder {dest_folder}")
+                self.view.show_message(f"Destination folder {dest_folder}")
             else:
-                self.view.show(f"Invalid Destination folder")
+                self.view.show_message(f"Invalid Destination folder")
             # Recieve the number of files to recieve
             bytes = self.model.recv_bytes()
-            no_files = int(bytes.decode('utf-8'))
-            while no_files > 0:
-                no_files -= 1 
+            no_files_to_recieve = int(bytes.decode('utf-8'))
+            files_recieved = 0
+            while files_recieved < no_files_to_recieve:
+                files_recieved += 1 
                 try:
-                    self.view.show_message(self._recieve_file(dest_folder))
+                    self.view.show_message(f"\nRecieving file {files_recieved}/{no_files_to_recieve}... (press 'q' to stop)")
+                    recv_file = asyncio.create_task(self.model._recieve_file(dest_folder))
+                    pressed_key = asyncio.create_task(async_key_pressed())
+                    # self.view.show_message(self._recieve_file(dest_folder))
+
+                    done, pending = await asyncio.wait(
+                        {recv_file, pressed_key}, 
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+
+                    for task in pending:
+                        task.cancel()
+
+                    if recv_file in done:
+                        result = recv_file.result()
+                        self.view.show_message(f"{result}")
+                    elif key_pressed in done:
+                        self.view.show_message("Recieving stopped by user.")
+
                 except Exception as e:
                     self.view.show_message(f"Error: {e}")
 
-    def transfer_loop(self):
+    async def transfer_loop(self):
         """Transfer files"""
         while True:
             self.view.show_message("\n[1] Send files \n[2] Recieve files \n[3] Backe to main")
             sel = self.view.get_selection()
-            if sel and sel == 1:
+            if   sel == 1:
                 self.try_send()
-            elif sel and sel == 2:
-                self.try_recieve()
+            elif sel == 2:
+                await self.try_recieve()
+            elif sel == 3:
+                break
 
 
 if __name__ == "__main__":
     print("Welcome smartcode!")
     xender = XenderController("smartcode")
-    xender.run()
+    asyncio.run(xender.run())

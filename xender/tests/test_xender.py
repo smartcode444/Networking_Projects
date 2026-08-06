@@ -1,8 +1,6 @@
 import socket
 import os 
 import sys
-import os
-import sys
 
 # Get the directory of the current script (utils/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,7 +15,7 @@ from src.xender import mySocket
 def log(message):
     print(message)
 
-def key_pressed() -> bool | str:
+def key_pressed() -> str | None:
     """Return the character if a key was pressed, else None."""
     if os.name == 'nt':
         import msvcrt
@@ -31,6 +29,7 @@ def key_pressed() -> bool | str:
         if rlist:
             return sys.stdin.read(1)
         return None
+
 
 PORT = 8888
 IP = "127.0.0.1"
