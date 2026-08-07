@@ -9,7 +9,6 @@ Summary
 Key files
 ---------
 - `src/xender.py` — main implementation (discovery, connection, transfer, console UI).
-- `src/color.py` — terminal color helpers.
 - `test/test_xender.py` — interactive test/demo for sending/receiving sockets.
 
 Features
@@ -82,7 +81,7 @@ Notes & caveats
 - The code falls back to the broadcast address `255.255.255.255` when `netifaces` is not available or no broadcast address is found.
 - On Windows, console key detection uses `msvcrt.kbhit()`; on Unix it uses `select` and reading from stdin.
 - The UI uses `tkinter.filedialog` for file/folder selection — when running headless or in CI, GUI dialogs will block or fail.
-- The transfer protocol is intentionally simple and meant for local, trusted networks — it has no encryption or integrity verification.
+- The current transfer protocol is intentionally simple and meant for local, trusted networks — it has no encryption or integrity verification.
 
 Contributing
 ------------
