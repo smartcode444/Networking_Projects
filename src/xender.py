@@ -1,30 +1,46 @@
 import socket
 import asyncio
 import tkinter as tk
-from tkinter import filedialog
 import os
-from datetime import datetime
 import netifaces
+import logging, sys
+import hotspot
+from tkinter import filedialog
+from datetime import datetime
 
 
 root = tk.Tk()
 root.withdraw()
 
+import logging
+import sys
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.FileHandler("butterlock.log"), logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("ButterLock")
+
+# logger.info("This is a info message")
+# logger.debug("This is a debug message")
+# logger.warning("This is a warning message")
+# logger.error("This is a error message")
 
 def log(msg):
     """Print with timestamp"""
     print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}")
 
 def get_broadcast_address():
-#     for interface in netifaces.interfaces():
-#         addrs = netifaces.ifaddresses(interface)
-#         if netifaces.AF_INET in addrs:
-#             for addr in addrs[netifaces.AF_INET]:
-#                 ip = addr['addr']
-#                 netmask = addr.get('netmask')
-#                 broadcast = addr.get('broadcast')
-#                 if broadcast and not ip.startswith('127.'):
-#                     return broadcast
+    for interface in netifaces.interfaces():
+        addrs = netifaces.ifaddresses(interface)
+        if netifaces.AF_INET in addrs:
+            for addr in addrs[netifaces.AF_INET]:
+                ip = addr['addr']
+                netmask = addr.get('netmask')
+                broadcast = addr.get('broadcast')
+                if broadcast and not ip.startswith('127.'):
+                    return broadcast
     return "255.255.255.255"  # fallback
 
 def start_hotspot():
@@ -40,7 +56,7 @@ def key_pressed() -> bool | str:
         return None
     else:
         # Unix
-        import select, sys
+        import select
         rlist, _, _ = select.select([sys.stdin], [], [], 0)
         if rlist:
             return sys.stdin.read(1)
@@ -92,24 +108,24 @@ class NetworkManager:
 
         self.selected_mode     = None
 
-        log("[SOCKET] Creating UDP socket...")
+        logger.info("[SOCKET] Creating UDP socket...")
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
         self.udp_socket.bind(('', self.UDP_PORT))
-        log("[SOCKET] UDP socket created and running")
+        logger.info("[SOCKET] UDP socket created and running")
 
     def broadcast(self) -> bool:
         """Broadcast to sockets on the network"""
         self.selected_mode = "broadcast"
-        log("[BROADCAST] Creating Listening TCP socket...")
+        logger.info("[BROADCAST] Creating Listening TCP socket...")
         self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
         self.tcp_socket.bind(('', self.TCP_PORT))
         self.tcp_socket.listen(1)
         self.tcp_socket.settimeout(1.0) 
-        log("[BROADCAST] Listening TCP socket up and ready")
+        logger.info("[BROADCAST] Listening TCP socket up and ready")
 
         self.udp_socket.settimeout(1.0)
         try: 
@@ -117,17 +133,17 @@ class NetworkManager:
             message = bytes([len(username_bytes)]) + username_bytes + b"XENDER_DISCOVERY_REQUEST"
             while True:
                 try:
-                    log("[BROADCAST] UDP socket broadcasting discovery message...")
+                    logger.info("[BROADCAST] UDP socket broadcasting discovery message...")
                     self.udp_socket.sendto(message, (get_broadcast_address(), self.UDP_PORT))
 
-                    log("[BROADCAST] UDP socket waiting for response...")
+                    logger.info("[BROADCAST] UDP socket waiting for response...")
                     data, addr = self.udp_socket.recvfrom(1024)
                 
                     if data.startswith(message):
                         continue
 
                     data = data.decode('utf-8').strip()
-                    log("[BROADCAST] UDP socket recieved response: " + str(data) + " from " + str(addr[0]) + ":" + str(addr[1]))
+                    logger.info("[BROADCAST] UDP socket recieved response: " + str(data) + " from " + str(addr[0]) + ":" + str(addr[1]))
 
                     if data[:7] == "I_SEE_U":
                         device_name = data[7:]
@@ -142,14 +158,14 @@ class NetworkManager:
 
         except KeyboardInterrupt:
             print("\n")
-            log("[BROADCAST] Keyboard Interrupt detected\n" \
+            logger.info("[BROADCAST] Keyboard Interrupt detected\n" \
                 "[BROADCAST] Shutting down Listening TCP socket\n" \
                 "[BROADCAST] Broadcasting operation terminated!")
             self.tcp_socket.close()
             return False
 
         try:  
-            log("[BROADCAST] Listening TCP socket ...")
+            logger.info("[BROADCAST] Listening TCP socket ...")
             while True:
                 try:
                     self.tcp_client_socket, tcp_client_addr = self.tcp_socket.accept()
@@ -162,7 +178,7 @@ class NetworkManager:
 
         except KeyboardInterrupt:
             print("\n")
-            log("[BROADCAST] Keyboard interrupt detected\n" \
+            logger.info("[BROADCAST] Keyboard interrupt detected\n" \
                 "[BROADCAST] Shutting down Listening TCP socket\n" \
                 "[BROADCAST] Broadcasting operation terminated!")
             self.tcp_socket.close()
@@ -170,7 +186,7 @@ class NetworkManager:
         
         except Exception as e:
             print("\n")
-            log(f"[BROADCAST] An error occured {e} in broadcast()\n" \
+            logger.info(f"[BROADCAST] An error occured {e} in broadcast()\n" \
                 "[BROADCAST] Shutting down Listening TCP socket\n" \
                 "[BROADCAST] Broadcasting operation terminated!")
             self.tcp_socket.close()
@@ -181,7 +197,7 @@ class NetworkManager:
         """Scan for devices on the network"""
         self.selected_mode = "scan"
         self.udp_socket.settimeout(1.0)
-        log("[SCAN] Creating connecting TCP socket")
+        logger.info("[SCAN] Creating connecting TCP socket")
         self.tcp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         devices = {}
@@ -283,7 +299,7 @@ class NetworkManager:
         return self.tcp_client_socket.recv(no_bytes)
 
     def send_bytes(self, bytes):
-        return self.tcp_client_socket.send(bytes)
+        return self.tcp_client_socket.sendall(bytes)
     
     async def _recieve_file(self, dest_folder):
         """Recieve files"""
@@ -292,8 +308,8 @@ class NetworkManager:
                 cmd = self.recv_bytes(1)
                 if not cmd:
                     return "Connection closed by Sender"
-                # if cmd   == b'\x02':   # END Command          # Add socket timeout retry logic
-                #     return "Transfer complete."
+                if cmd   == b'\x02':   # END Command    
+                    return "Transfer complete."
                 elif cmd == b'\x01':   # File transfer
                     length_data = self.recv_bytes(4)
                     if len(length_data) < 4:
@@ -330,8 +346,9 @@ class NetworkManager:
                     return f"Unknown command: {cmd}"
 
         except asyncio.CancelledError:
+            raise asyncio.CancelledError
             return f"Recieving {filename} was cancelled by user"
-            raise
+            raise asyncio.CancelledError
         
             
 
@@ -423,8 +440,15 @@ class XenderController():
                 return
 
             # Cannot send more than 99 files
-            no_files = str(len(file_paths)).encode('utf-8')
-            self.model.send_bytes(no_files)
+            # Increase no of files that can be sent on the net
+            no_files = len(file_paths)
+            if   1 <= no_files < 9:
+                no_files_bytes = ("0"+str(no_files)).encode('utf-8')
+            elif 10 <= no_files <= 99:
+                no_files_bytes = str(no_files).encode('utf-8')
+            else:
+                return
+            self.model.send_bytes(no_files_bytes)
             
             for file_obj in file_paths:
                 name = os.path.basename(file_obj.name)
@@ -437,7 +461,7 @@ class XenderController():
                     continue
                 except Exception as e:
                     self.view.show_message(f"Error sending {name}: {e}")
-            # self.model._send_end()
+            self.model._send_end()
 
     async def try_recieve(self):
         """Recieve files"""
@@ -448,7 +472,11 @@ class XenderController():
         else:
             self.view.show_message(f"Invalid Destination folder")
         # Recieve the number of files to recieve
-        bytes = self.model.recv_bytes(2)
+        try:
+            bytes = self.model.recv_bytes(2)
+        except ValueError:
+            return 
+        
         no_files_to_recieve = int(bytes.decode('utf-8'))
         files_recieved = 0
         while files_recieved < no_files_to_recieve:
