@@ -1,15 +1,15 @@
-# Xender
+# Zender
 
 Simple LAN file-transfer utility using UDP discovery and TCP file transfer.
 
 Summary
 -------
-`Xender` discovers peers on the local network (UDP broadcast), negotiates a TCP connection, and sends or receives files using a small, interactive console UI and native file/folder choosers.
+`Zender` discovers peers on the local network (UDP broadcast), negotiates a TCP connection, and sends or receives files using a small, interactive console UI and native file/folder choosers.
 
 Key files
 ---------
-- `src/xender.py` — main implementation (discovery, connection, transfer, console UI).
-- `test/test_xender.py` — interactive test/demo for sending/receiving sockets.
+- `src/Zender.py` — main implementation (discovery, connection, transfer, console UI).
+- `test/test_Zender.py` — interactive test/demo for sending/receiving sockets.
 
 Features
 --------
@@ -42,12 +42,12 @@ source .venv/bin/activate            # Unix/macOS
 pip install netifaces
 ```
 
-3. Run the interactive Xender app:
+3. Run the interactive Zender app:
 
 ```powershell
-python -m src.xender
+python -m src.Zender
 # or
-python src/xender.py
+python src/Zender.py
 ```
 
 Usage notes
@@ -59,21 +59,21 @@ Usage notes
 
 Testing / Demo
 --------------
-- The included `test/test_xender.py` file acts as an interactive demo to create a listening or connecting socket. Run it and follow on-screen prompts:
+- The included `test/test_Zender.py` file acts as an interactive demo to create a listening or connecting socket. Run it and follow on-screen prompts:
 
 ```powershell
-python -m pytest test/test_xender.py -q
+python -m pytest test/test_Zender.py -q
 ```
 
 Or run two terminals manually:
 
 - Terminal A (listener):
   ```powershell
-  python -m src.xender   # choose Broadcast and accept
+  python -m src.Zender   # choose Broadcast and accept
   ```
 - Terminal B (sender):
   ```powershell
-  python -m src.xender   # choose Scan and connect, then Send files
+  python -m src.Zender   # choose Scan and connect, then Send files
   ```
 
 Notes & caveats

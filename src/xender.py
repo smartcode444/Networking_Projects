@@ -1,3 +1,12 @@
+"""
+███████╗███████╗███╗   ██╗███████╗███████╗███████╗
+    ██╔╝██╔════╝████╗  ██║██╔══██╗██╔════╝██╔══██╗
+   ██╔╝ █████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝
+  ██╔╝  ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗
+███████╗███████╗██║ ╚████║███████╗███████╗██║  ██║
+╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝
+"""
+
 import socket
 import asyncio
 import tkinter as tk
@@ -5,6 +14,7 @@ import os
 import netifaces
 import logging, sys
 import hotspot
+import WHconn
 from tkinter import filedialog
 from datetime import datetime
 
@@ -18,7 +28,7 @@ import sys
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("butterlock.log"), logging.StreamHandler(sys.stdout)]
+    handlers=[logging.FileHandler("zender.log"), logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger("ButterLock")
 
@@ -423,9 +433,6 @@ class XenderController():
                 self.view.show_message("Goodbye!")
                 self.running = False
                 self.model.udp_socket.close()
-
-                # if hasattr(self.model, "tcp_client_socket"):
-                #     self.model.tcp_client_socket.close()
                 if self.model.tcp_client_socket:
                     self.model.tcp_client_socket.close()
                 break
@@ -505,8 +512,6 @@ class XenderController():
             except Exception as e:
                 self.view.show_message(f"Error: {e}")
 
-            
-
     async def transfer_loop(self):
         """Transfer files"""
         while True:
@@ -516,11 +521,135 @@ class XenderController():
                 self.try_send()
             elif sel == 2:
                 await self.try_recieve()
-            elif sel == 3:
-                break
+            elif sel == 3:break
+
+def on_hotspot():
+        # Check if is_admin
+        if not hotspot.is_admin():
+            print("ERROR: This script must be run as Administrator to manage Hotspot connection.")
+            print("Please right-click the script and select 'Run as administrator'.")
+            return
+
+        # Check driver support
+        if not hotspot.get_driver_info():
+            print("ERROR: Your Wi-Fi adapter does not support Hosted Network.")
+            print("Please check your driver or use a different adapter.")
+            return
+
+        status    = hotspot.get_hosted_network_status()
+        ssid, key = hotspot.get_current_hosted_settings()
+
+        if status == "started":
+            clients = hotspot.get_connected_clients()
+            print("\n" + "="*50)
+            print("HOTSPOT IS ALREADY ACTIVE")
+            print("="*50)
+            print(f"  SSID            : {ssid if ssid else 'Unknown'}")
+            print(f"  Password        : {key if key else 'Unknown'}")
+            print(f"  Connected devices: {clients}")
+            print("="*50)
+            print("No changes were made to your system.")
+            return  # Exit gracefully without touching anything
+
+        # If not started, display current status and proceed
+        print(f"Hotspot status: {status.capitalize()}. Setting up and starting...")
+
+        # Get or create configuration
+        if ssid and key:
+            print(f"Using existing configuration:")
+            print(f"  SSID     : {ssid}")
+            print(f"  Password : {key}")
+        else:
+            ssid = hotspot.generate_random_ssid()
+            key = hotspot.generate_random_key()
+            print("No existing Hosted Network found. Creating new one...")
+            hotspot.set_hosted_network(ssid, key)
+            print(f"  SSID     : {ssid}")
+            print(f"  Password : {key}")
+
+            # Start the Hosted Network
+            if hotspot.start_hosted_network():
+                print("\nHotspot started successfully.")
+                print("You can now connect other devices using the above SSID and password.")
+                print("(Internet access will not be available unless you enable ICS manually.)")
+            else:
+                print("\nHotspot could not be started. Check if another hotspot is already running.")
+                return
+
+def check_wifi_hotspot():
+    print("=" * 60)
+    print("  Wi‑Fi Hotspot Status Checker")
+    print("=" * 60)
+
+    # ---------- Check if this device is hosting a hotspot ----------
+    hosted_started, hosted_ssid, hosted_password, client_count = WHconn.get_hosted_network_status()
+
+    # ---------- Check if this device is connected as a client ----------
+    client_info = WHconn.get_client_wifi_info()
+    client_state = client_info.get("state") if client_info else None
+    client_ssid = client_info.get("ssid") if client_info else None
+    client_network_type = client_info.get("network_type") if client_info else None
+
+    # ---------- Determine status ----------
+    # Case 1: Device is the hotspot and has at least one client connected
+    if hosted_started and client_count > 0:
+        print("\n✅ Your device is acting as a Wi‑Fi hotspot.")
+        print(f"   Hotspot SSID   : {hosted_ssid if hosted_ssid else 'Unknown'}")
+        print(f"   Password       : {hosted_password if hosted_password else 'Unknown'}")
+        print(f"   Connected devices: {client_count}")
+        print("   (Other devices are connected to your hotspot.)")
+        return
+
+    # Case 2: Device is connected as a client to another hotspot
+    if client_state == "connected" and client_ssid:
+        if WHconn.is_hotspot_network(client_ssid, client_network_type):
+            device_name = WHconn.guess_device_name(client_ssid)
+            print("\n✅ Your device is connected to another device's hotspot.")
+            print(f"   Network name   : {client_ssid}")
+            print(f"   Device         : {device_name}")
+            print(f"   Network type   : {client_network_type if client_network_type else 'Unknown'}")
+            return
+
+    # Case 3: Neither – not part of any hotspot scenario
+    print("\n❌ Your device is NOT in a hotspot connection scenario.")
+    if hosted_started and client_count == 0:
+        print("   (Your hotspot is on, but no other devices are connected.)")
+    elif hosted_started and client_count > 0:
+        # already handled above, but just in case
+        pass
+    elif client_state == "connected":
+        print(f"   You are connected to Wi‑Fi network: {client_ssid}")
+        print("   (This does not appear to be a mobile hotspot.)")
+    else:
+        print("   Wi‑Fi is either off or not connected to any network.")
+
+    # Additional details for debugging
+    if hosted_started and client_count == 0:
+        print(f"   Hotspot SSID   : {hosted_ssid}")
+        print(f"   Password       : {hosted_password}")
+    if client_state == "connected":
+        print(f"   Connected to   : {client_ssid} (type: {client_network_type})")
 
 
 if __name__ == "__main__":
+    print("███████╗███████╗███╗   ██╗███████╗███████╗███████╗")
+    print("    ██╔╝██╔════╝████╗  ██║██╔══██╗██╔════╝██╔══██╗")
+    print("   ██╔╝ █████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝")
+    print("  ██╔╝  ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗")
+    print("███████╗███████╗██║ ╚████║███████╗███████╗██║  ██║")
+    print("╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝")        
     print("Welcome smartcode!")
     xender = XenderController("smartcode")
+
+    check_wifi_hotspot()
+    """Clear screen"""
+    print("[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip")
+    while True:
+        key = key_pressed()
+        if   key == "1":
+            on_hotspot()
+        elif key == "2":
+            check_wifi_hotspot()
+        elif key  == "3": break
+
     asyncio.run(xender.run())
