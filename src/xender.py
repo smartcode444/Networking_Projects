@@ -10,11 +10,12 @@
 import socket
 import asyncio
 import tkinter as tk
-import os
+import os, sys
 import netifaces
-import logging, sys
+import logging
 import hotspot
 import WHconn
+import color
 from tkinter import filedialog
 from datetime import datetime
 
@@ -30,7 +31,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.FileHandler("zender.log"), logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("ButterLock")
+logger = logging.getLogger("Zender")
 
 # logger.info("This is a info message")
 # logger.debug("This is a debug message")
@@ -577,20 +578,21 @@ def on_hotspot():
                 return
 
 def check_wifi_hotspot():
+    print("\nChecking Wifi-Hotspot Status...")
     print("=" * 60)
-    print("  Wi‑Fi Hotspot Status Checker")
+    print("  Wi-Fi Hotspot Status Checker")
     print("=" * 60)
 
-    # ---------- Check if this device is hosting a hotspot ----------
+    # Check if this device is hosting a hotspot 
     hosted_started, hosted_ssid, hosted_password, client_count = WHconn.get_hosted_network_status()
 
-    # ---------- Check if this device is connected as a client ----------
+    # Check if this device is connected as a client
     client_info = WHconn.get_client_wifi_info()
     client_state = client_info.get("state") if client_info else None
     client_ssid = client_info.get("ssid") if client_info else None
     client_network_type = client_info.get("network_type") if client_info else None
 
-    # ---------- Determine status ----------
+    # Determine status 
     # Case 1: Device is the hotspot and has at least one client connected
     if hosted_started and client_count > 0:
         print("\n✅ Your device is acting as a Wi‑Fi hotspot.")
@@ -618,10 +620,10 @@ def check_wifi_hotspot():
         # already handled above, but just in case
         pass
     elif client_state == "connected":
-        print(f"   You are connected to Wi‑Fi network: {client_ssid}")
+        print(f"   You are connected to Wi-Fi network: {client_ssid}")
         print("   (This does not appear to be a mobile hotspot.)")
     else:
-        print("   Wi‑Fi is either off or not connected to any network.")
+        print("   Wi-Fi is either off or not connected to any network.")
 
     # Additional details for debugging
     if hosted_started and client_count == 0:
@@ -643,13 +645,16 @@ if __name__ == "__main__":
 
     check_wifi_hotspot()
     """Clear screen"""
-    print("[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip")
+    print("[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip \n[4] Exit")
     while True:
         key = key_pressed()
         if   key == "1":
             on_hotspot()
+            print("\n[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip \n[4] Exit")
         elif key == "2":
             check_wifi_hotspot()
+            print("\n[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip \n[4] Exit")
         elif key  == "3": break
+        elif key  == "4": sys.exit()
 
     asyncio.run(xender.run())
