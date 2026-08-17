@@ -47,7 +47,7 @@ def get_hosted_network_status():
 
 def get_client_wifi_info():
     """
-    Get info about the current Wi‑Fi connection (client mode).
+    Get info about the current Wi-Fi connection (client mode).
     Returns: dict with state, ssid, network_type, bssid
     """
     output = run_netsh("wlan show interfaces")

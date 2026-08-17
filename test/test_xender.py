@@ -10,7 +10,8 @@ parent_dir = os.path.dirname(current_dir)
 # Add the parent directory to Python's search path
 sys.path.append(parent_dir)
 # Import from the folder using 'from folder.file import function'
-from src.xender import NetworkManager, ConsoleView, XenderController
+from src.xender import XenderController
+
 
 def log(message):
     print(message)

@@ -13,18 +13,15 @@ import tkinter as tk
 import os, sys
 import netifaces
 import logging
-import hotspot
-import WHconn
-import color
+from . import WHconn
+from . import hotspot
+# from color import fg, bg
 from tkinter import filedialog
 from datetime import datetime
 
 
 root = tk.Tk()
 root.withdraw()
-
-import logging
-import sys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,54 +51,59 @@ def get_broadcast_address():
                     return broadcast
     return "255.255.255.255"  # fallback
 
-def start_hotspot():
-    """Starts hotspot on windows even when offline"""
-    pass
 
 def key_pressed() -> bool | str:
     """Return the character if a key was pressed, else None."""
-    if os.name == 'nt':
-        import msvcrt
-        if msvcrt.kbhit():
-            return msvcrt.getch().decode('utf-8', errors='ignore')
-        return None
-    else:
-        # Unix
-        import select
-        rlist, _, _ = select.select([sys.stdin], [], [], 0)
-        if rlist:
-            return sys.stdin.read(1)
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            if msvcrt.kbhit():
+                return msvcrt.getch().decode('utf-8', errors='ignore')
+            return None
+        else:
+            # Unix
+            import select
+            rlist, _, _ = select.select([sys.stdin], [], [], 0)
+            if rlist:
+                return sys.stdin.read(1)
+            return None
+        
+    except KeyboardInterrupt:
         return None
 
 async def async_key_pressed() -> str | None:
     """Return the character if a key was pressed, else None."""
-    if os.name == 'nt':
-        import msvcrt
-        while True:
-            try:
-                if msvcrt.kbhit():
-                    key = msvcrt.getch().decode('utf-8', errors='ignore')
-                    if key == 'q':
-                        return 
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            while True:
+                try:
+                    if msvcrt.kbhit():
+                        key = msvcrt.getch().decode('utf-8', errors='ignore')
+                        if key == 'q':
+                            return 
 
-                await asyncio.sleep(0.1)
-            except asyncio.CancelledError:
-                raise
-
-    else:
-        while True:
-            try:
-                # Unix
-                import select, sys
-                rlist, _, _ = select.select([sys.stdin], [], [], 0)
-                if rlist:
-                    key =  sys.stdin.read(1)
-                    if key == 'q':
-                        return 
                     await asyncio.sleep(0.1)
-                return None
-            except asyncio.CancelledError:
-                raise
+                except asyncio.CancelledError:
+                    raise
+
+        else:
+            while True:
+                try:
+                    # Unix
+                    import select, sys
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0)
+                    if rlist:
+                        key =  sys.stdin.read(1)
+                        if key == 'q':
+                            return 
+                        await asyncio.sleep(0.1)
+                    return None
+                except asyncio.CancelledError:
+                    raise
+
+    except KeyboardInterrupt:
+            return None
 
 class NetworkManager:
     def __init__(self, username: str):
@@ -156,15 +158,21 @@ class NetworkManager:
                     data = data.decode('utf-8').strip()
                     logger.info("[BROADCAST] UDP socket recieved response: " + str(data) + " from " + str(addr[0]) + ":" + str(addr[1]))
 
+                    # Bug - This block of output gets buried in tens of printed messages from code above 
+                    # Increase socket timeout
                     if data[:7] == "I_SEE_U":
+                        self.udp_socket.settimeout(20.0)
                         device_name = data[7:]
                         print(f"\nAccept connection from '{device_name}' \n[1] Yes \n[2] No")
                         key = key_pressed()
-                        if key == "1":
+                        if   key == "1":
                             print(f"Accepting connection from '{device_name}'...")
                             break
+                        # elif key == "2":
+                        #     continue
                         
                 except socket.timeout:
+                    self.udp_socket.settimeout(1.0)
                     continue
 
         except KeyboardInterrupt:
@@ -423,13 +431,13 @@ class XenderController():
                     selected_name = list(devices.keys())[idx-1]
                     if self.model.connect(devices[selected_name][0], selected_name):
                         self.view.show_message(f"Connected to {selected_name}")
-                        self.transfer_loop()
+                        await self.transfer_loop()
                 else:
                     self.view.show_message("No devices found.")
             elif choice and choice == '2':
                 if self.model.broadcast():
                     self.view.show_message("Connected to a device.")
-                    self.transfer_loop()
+                    await self.transfer_loop()
             elif choice and choice == '3':
                 self.view.show_message("Goodbye!")
                 self.running = False
@@ -579,9 +587,6 @@ def on_hotspot():
 
 def check_wifi_hotspot():
     print("\nChecking Wifi-Hotspot Status...")
-    print("=" * 60)
-    print("  Wi-Fi Hotspot Status Checker")
-    print("=" * 60)
 
     # Check if this device is hosting a hotspot 
     hosted_started, hosted_ssid, hosted_password, client_count = WHconn.get_hosted_network_status()
@@ -595,7 +600,7 @@ def check_wifi_hotspot():
     # Determine status 
     # Case 1: Device is the hotspot and has at least one client connected
     if hosted_started and client_count > 0:
-        print("\n✅ Your device is acting as a Wi‑Fi hotspot.")
+        print("\n Your device is acting as a Wi-Fi hotspot.")
         print(f"   Hotspot SSID   : {hosted_ssid if hosted_ssid else 'Unknown'}")
         print(f"   Password       : {hosted_password if hosted_password else 'Unknown'}")
         print(f"   Connected devices: {client_count}")
@@ -606,14 +611,14 @@ def check_wifi_hotspot():
     if client_state == "connected" and client_ssid:
         if WHconn.is_hotspot_network(client_ssid, client_network_type):
             device_name = WHconn.guess_device_name(client_ssid)
-            print("\n✅ Your device is connected to another device's hotspot.")
+            print("\n Your device is connected to another device's hotspot.")
             print(f"   Network name   : {client_ssid}")
             print(f"   Device         : {device_name}")
             print(f"   Network type   : {client_network_type if client_network_type else 'Unknown'}")
             return
 
     # Case 3: Neither – not part of any hotspot scenario
-    print("\n❌ Your device is NOT in a hotspot connection scenario.")
+    # print("\n   Your device is NOT in a hotspot connection") # scenario.
     if hosted_started and client_count == 0:
         print("   (Your hotspot is on, but no other devices are connected.)")
     elif hosted_started and client_count > 0:
@@ -621,7 +626,7 @@ def check_wifi_hotspot():
         pass
     elif client_state == "connected":
         print(f"   You are connected to Wi-Fi network: {client_ssid}")
-        print("   (This does not appear to be a mobile hotspot.)")
+        print("   (But This does not appear to be a hotspot from a Supported device.)")
     else:
         print("   Wi-Fi is either off or not connected to any network.")
 
@@ -629,32 +634,50 @@ def check_wifi_hotspot():
     if hosted_started and client_count == 0:
         print(f"   Hotspot SSID   : {hosted_ssid}")
         print(f"   Password       : {hosted_password}")
-    if client_state == "connected":
-        print(f"   Connected to   : {client_ssid} (type: {client_network_type})")
+    # if client_state == "connected":
+    #     print(f"   You are Connected to   : {client_ssid} (type: {client_network_type})")
 
-
-if __name__ == "__main__":
+def cls():
+    """Clear screen"""
+    print("\033[2J\033[H", end="")      
     print("███████╗███████╗███╗   ██╗███████╗███████╗███████╗")
-    print("    ██╔╝██╔════╝████╗  ██║██╔══██╗██╔════╝██╔══██╗")
+    print("    ██╔╝██╔════╝████╗  ██║██╔══██║██╔════╝██╔══██║")
     print("   ██╔╝ █████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝")
     print("  ██╔╝  ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗")
-    print("███████╗███████╗██║ ╚████║███████╗███████╗██║  ██║")
-    print("╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝")        
-    print("Welcome smartcode!")
-    xender = XenderController("smartcode")
+    print("███████╗███████╗██║ ╚████║███████║███████╗██║  ██║")
+    print("╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝")
+
+if __name__ == "__main__":
+    cls()
+    print("The best File-Transfer tool")
+    USERNAME = input("Enter username: ")
+    cls()
+    print(f"Welcome {USERNAME}!")
+    xender = XenderController(USERNAME)
 
     check_wifi_hotspot()
-    """Clear screen"""
-    print("[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip \n[4] Exit")
+    
+    print("\n[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip to Transfer FILES \n[4] Exit")
     while True:
         key = key_pressed()
         if   key == "1":
+            cls()
             on_hotspot()
-            print("\n[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip \n[4] Exit")
+            print("\n[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip to Transfer FILES \n[4] Exit")
         elif key == "2":
+            cls()
             check_wifi_hotspot()
-            print("\n[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip \n[4] Exit")
+            print("\n[1] Activate Device Hotspot  \n[2] Check Wifi-Hotspot Status \n[3] Skip to Transfer FILES \n[4] Exit")
         elif key  == "3": break
         elif key  == "4": sys.exit()
 
     asyncio.run(xender.run())
+
+
+
+    # print(f"{fg.GREEN}███████╗███████╗███╗   ██╗███████╗███████╗███████╗{fg.RESET}")
+    # print(f"{fg.GREEN}    ██╔╝██╔════╝████╗  ██║██╔══██╗██╔════╝██╔══██╗{fg.RESET}")
+    # print(f"{fg.GREEN}   ██╔╝ █████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝{fg.RESET}")
+    # print(f"{fg.GREEN}  ██╔╝  ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗{fg.RESET}")
+    # print(f"{fg.GREEN}███████╗███████╗██║ ╚████║███████╗███████╗██║  ██║{fg.RESET}")
+    # print(f"{fg.GREEN}╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝{fg.RESET}")
