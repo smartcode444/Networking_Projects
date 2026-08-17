@@ -282,7 +282,7 @@ class NetworkManager:
         self.tcp_client_socket.send(b'\x02')
     
 
-    def _send_file(self, name, path):
+    async def _send_file(self, name, path):
         """Send file"""
         # Send command: 0x01 = file transfer
         self.tcp_client_socket.send(b'\x01')
@@ -306,6 +306,7 @@ class NetworkManager:
                         break
                     self.tcp_client_socket.sendall(chunk)
                     sent += len(chunk)
+                    await asyncio.sleep(0.1)
                 print(f"File: {name} sent successfully!")
 
         except KeyboardInterrupt:
@@ -319,6 +320,20 @@ class NetworkManager:
 
     def send_bytes(self, bytes):
         return self.tcp_client_socket.sendall(bytes)
+
+    def clear_receive_buffer(self):
+        """Reads and discards all pending data currently in the socket buffer."""
+        self.tcp_client_socket.setblocking(False)
+        try:
+            while True:
+                data = self.recv_bytes(4096)
+                if not data:
+                    break
+        except BlockingIOError:
+            pass
+        finally:
+            self.tcp_client_socket.setblocking(True)
+
     
     async def _recieve_file(self, dest_folder):
         """Recieve files"""
@@ -360,6 +375,7 @@ class NetworkManager:
                                 break
                             file.write(chunk)
                             recieved += len(chunk)
+                            await asyncio.sleep(0.1)
                     return f"File {filename} recieved"
                 else:
                     return f"Unknown command: {cmd}"
@@ -446,7 +462,7 @@ class XenderController():
                     self.model.tcp_client_socket.close()
                 break
 
-    def try_send(self):
+    async def try_send(self):
             """Send files"""
             file_paths = filedialog.askopenfiles(
                 title="Xender -> Select files",
@@ -470,8 +486,25 @@ class XenderController():
                 name = os.path.basename(file_obj.name)
                 path = file_obj.name
                 try:
-                    self.view.show_message(f"Sending {name}...")
-                    self.model._send_file(name, path)
+                    self.view.show_message(f"Sending {name}... (press 'q' to stop)")
+                    # self.model._send_file(name, path)
+                    send_file = asyncio.create_task(self.model._send_file(name, path))
+                    pressed_key = asyncio.create_task(async_key_pressed())
+                    done, pending = await asyncio.wait(
+                        {send_file, pressed_key}, 
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    for task in pending:
+                        task.cancel()
+    
+                    if send_file in done:
+                        result = send_file.result()
+                        self.view.show_message(f"{result}")
+                        
+                    elif key_pressed in done:
+                        self.view.show_message("Sending stopped by user.")
+
                 except KeyboardInterrupt:
                     self.view.show_message(f"[*] Keyboard Interrupt detected, Transfer of {name} is terminated")
                     continue
@@ -487,6 +520,9 @@ class XenderController():
             self.view.show_message(f"Destination folder {dest_folder}")
         else:
             self.view.show_message(f"Invalid Destination folder")
+
+        self.model.clear_receive_buffer()
+        
         # Recieve the number of files to recieve
         try:
             bytes = self.model.recv_bytes(2)
@@ -527,7 +563,7 @@ class XenderController():
             self.view.show_message("\n[1] Send files \n[2] Recieve files \n[3] Back to main")
             sel = self.view.get_selection(3)
             if   sel == 1:
-                self.try_send()
+                await self.try_send()
             elif sel == 2:
                 await self.try_recieve()
             elif sel == 3:break
