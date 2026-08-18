@@ -109,6 +109,7 @@ class NetworkManager:
     def __init__(self, username: str):
         self.UDP_PORT          = 7007
         self.TCP_PORT          = 5005
+        self.CTRL_PORT         = 500
         # self.MY_IP             = "255.255.255.255"
 
         self.DISCOVERY_MESSAGE = "XENDER_DISCOVERY_REQUEST"
@@ -118,106 +119,82 @@ class NetworkManager:
 
         self.tcp_socket        = None
         self.tcp_client_socket = None
+        self.ctrl_socket       = None # accepted from broadcaster side
+        self.ctrl_conn         = None # connected from scanner side
 
         self.selected_mode     = None
 
-        logger.info("[SOCKET] Creating UDP socket...")
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
         self.udp_socket.bind(('', self.UDP_PORT))
-        logger.info("[SOCKET] UDP socket created and running")
+        self.udp_socket.settimeout(1.0)
 
-    def broadcast(self) -> bool:
-        """Broadcast to sockets on the network"""
+    def init_bd_socks(self) -> bool:
+        """Intialize sockets for broadcasting"""
         self.selected_mode = "broadcast"
-        logger.info("[BROADCAST] Creating Listening TCP socket...")
+
+        self.ctrl_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+        self.ctrl_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
+        self.ctrl_server.bind(('', self.CTRL_PORT))
+        self.ctrl_server.listen(1)
+
         self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
         self.tcp_socket.bind(('', self.TCP_PORT))
         self.tcp_socket.listen(1)
-        self.tcp_socket.settimeout(1.0) 
-        logger.info("[BROADCAST] Listening TCP socket up and ready")
 
-        self.udp_socket.settimeout(1.0)
-        try: 
-            username_bytes = self.name.encode('utf-8')
-            message = bytes([len(username_bytes)]) + username_bytes + b"XENDER_DISCOVERY_REQUEST"
-            while True:
-                try:
-                    logger.info("[BROADCAST] UDP socket broadcasting discovery message...")
-                    self.udp_socket.sendto(message, (get_broadcast_address(), self.UDP_PORT))
 
-                    logger.info("[BROADCAST] UDP socket waiting for response...")
-                    data, addr = self.udp_socket.recvfrom(1024)
-                
-                    if data.startswith(message):
-                        continue
+    def broadcast(self, message):
+        try:
+            self.udp_socket.sendto(message, (get_broadcast_address(), self.UDP_PORT))
+            data, addr = self.udp_socket.recvfrom(1024)
+            if not data.startswith(message):
+                data = data.decode('utf-8').strip()    
+                if data[:7] == "I_SEE_U":
+                    self.udp_socket.settimeout(20.0)
+                    device_name = data[7:]
+                    return device_name
 
-                    data = data.decode('utf-8').strip()
-                    logger.info("[BROADCAST] UDP socket recieved response: " + str(data) + " from " + str(addr[0]) + ":" + str(addr[1]))
+        except socket.timeout:
+            raise socket.timeout
 
-                    # Bug - This block of output gets buried in tens of printed messages from code above 
-                    # Increase socket timeout
-                    if data[:7] == "I_SEE_U":
-                        self.udp_socket.settimeout(20.0)
-                        device_name = data[7:]
-                        print(f"\nAccept connection from '{device_name}' \n[1] Yes \n[2] No")
-                        key = key_pressed()
-                        if   key == "1":
-                            print(f"Accepting connection from '{device_name}'...")
-                            break
-                        # elif key == "2":
-                        #     continue
-                        
-                except socket.timeout:
-                    self.udp_socket.settimeout(1.0)
-                    continue
+        # except Exception:            
 
-        except KeyboardInterrupt:
-            print("\n")
-            logger.info("[BROADCAST] Keyboard Interrupt detected\n" \
-                "[BROADCAST] Shutting down Listening TCP socket\n" \
-                "[BROADCAST] Broadcasting operation terminated!")
+
+    def bd_connect(self, ):
+        self.tcp_socket.settimeout(1.0)   
+        try:
+            self.tcp_client_socket, addr = self.tcp_socket.accept()
             self.tcp_socket.close()
-            return False
 
-        try:  
-            logger.info("[BROADCAST] Listening TCP socket ...")
-            while True:
-                try:
-                    self.tcp_client_socket, tcp_client_addr = self.tcp_socket.accept()
-                    print(f"\nConnection from '{device_name}' accepted ")
-                    self.tcp_socket.close()
-                    return True
-
-                except socket.timeout:
-                    continue
-
-        except KeyboardInterrupt:
-            print("\n")
-            logger.info("[BROADCAST] Keyboard interrupt detected\n" \
-                "[BROADCAST] Shutting down Listening TCP socket\n" \
-                "[BROADCAST] Broadcasting operation terminated!")
-            self.tcp_socket.close()
-            return False
-        
+        except socket.timeout:
+            raise socket.timeout 
+    
         except Exception as e:
-            print("\n")
-            logger.info(f"[BROADCAST] An error occured {e} in broadcast()\n" \
-                "[BROADCAST] Shutting down Listening TCP socket\n" \
-                "[BROADCAST] Broadcasting operation terminated!")
             self.tcp_socket.close()
-            return False
+            raise e
+
+        try:
+            self.ctrl_socket, _ = self.ctrl_server.accept()
+            self.ctrl_server.close()
+
+        except socket.timeout:
+            raise socket.timeout 
+            
+        except Exception as e:
+            self.tcp_socket.close()
+            raise e
+
+    def init_scan_socks(self):
+        """Intialize sockets for scanning"""
+        self.tcp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
 
     def scan(self) -> dict:
         """Scan for devices on the network"""
         self.selected_mode = "scan"
-        self.udp_socket.settimeout(1.0)
-        logger.info("[SCAN] Creating connecting TCP socket")
-        self.tcp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         devices = {}
 
@@ -275,51 +252,63 @@ class NetworkManager:
                 print(f"An error occured in {e} connect()")
                 return False
 
-    # @classmethod
-    def _send_end(self):
-        """Send END command"""
-        # Send a command byte: 0x02 means END
-        self.tcp_client_socket.send(b'\x02')
-    
-
-    async def _send_file(self, name, path):
-        """Send file"""
-        # Send command: 0x01 = file transfer
-        self.tcp_client_socket.send(b'\x01')
-        
-        # Send filename length (4 bytes, big‑endian) and filename
-        name_bytes = name.encode('utf-8')
-        self.tcp_client_socket.send(len(name_bytes).to_bytes(4, 'big') + name_bytes)
-
-        # Send file name         
-        file_size = os.path.getsize(path)
-        self.tcp_client_socket.send(file_size.to_bytes(4, 'big'))
-
-        # Send file data
-        # print(f"Sending {name}...")
-        try:
-            with open(path, "rb") as file:
-                sent = 0
-                while sent < file_size:
-                    chunk = file.read(4096)
-                    if not chunk:
-                        break
-                    self.tcp_client_socket.sendall(chunk)
-                    sent += len(chunk)
-                    await asyncio.sleep(0.1)
-                print(f"File: {name} sent successfully!")
-
-        except KeyboardInterrupt:
-            raise KeyboardInterrupt
-        
-        except Exception:
-            raise Exception
-
     def recv_bytes(self, no_bytes):
         return self.tcp_client_socket.recv(no_bytes)
 
     def send_bytes(self, bytes):
         return self.tcp_client_socket.sendall(bytes)
+    
+    def _send_end(self):
+        """Send END command"""
+        # Send a command byte: 0x02 means END
+        try:
+            self.tcp_client_socket.send(b'\x02')
+        except OSError:
+            pass
+
+    async def _send_file(self, name, path):
+        """Send a single file. Notifies reciever on cancellation"""
+        loop = asyncio.get_event_loop()
+        self.tcp_client_socket.setblocking(False)
+
+        try:
+            filesize = os.path.getsize(path)
+            namebytes = name.encode('utf-8')
+
+            header = (b'\x01' 
+                       + len(namebytes).to_bytes(4, 'big') 
+                       + namebytes
+                       + filesize.to_bytes(4, 'big'))
+            await loop.sock_sendall(self.tcp_client_socket, header)
+
+            with open(path, "rb") as f:
+                sent = 0
+                while sent < filesize:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    await loop.sock_sendall(self.tcp_client_socket, chunk)
+                    sent += len(chunk)
+
+            return f"Sent '{name}' sent successfully"
+
+        except asyncio.CancelledError:
+            try:
+                self.tcp_client_socket.setblocking(True)
+                self.tcp_client_socket.send(b'\x03')
+            except OSError:
+                pass 
+            raise
+
+        except OSError as e:
+            raise RuntimeError(f"Connection lost - reciever may have cancelled")
+
+        finally:
+            try:
+                self.tcp_client_socket.setblocking(True)
+            except OSError:
+                pass
+
 
     def clear_receive_buffer(self):
         """Reads and discards all pending data currently in the socket buffer."""
@@ -333,57 +322,76 @@ class NetworkManager:
             pass
         finally:
             self.tcp_client_socket.setblocking(True)
-
     
     async def _recieve_file(self, dest_folder):
-        """Recieve files"""
+        """Receive files. Shuts down socket on cancellation so sender unblocks."""
+        loop = asyncio.get_event_loop()
+        self.tcp_client_socket.setblocking(False)
+
+        async def recv_exact(n: int) -> bytes:
+            """Await exactly n bytes"""
+            buf = b''
+            while len(buf) < n:
+                chunk = await loop.sock_recv(self.tcp_client_socket, n - len(buf))
+                if not chunk:
+                    raise ConnectionError("Connection closed by sender")
+                buf += chunk
+            return buf
+
         try:
             while True:
-                cmd = self.recv_bytes(1)
+                cmd = await  loop.sock_recv(self.tcp_client_socket, 1)
+
                 if not cmd:
                     return "Connection closed by Sender"
-                if cmd   == b'\x02':   # END Command    
+
+                if cmd   == b'\x03':   # CANCEL - sender stopped
+                    return "Transfer cancelled by sender"
+                
+                elif cmd   == b'\x02':   # END - allf siles done
                     return "Transfer complete."
-                elif cmd == b'\x01':   # File transfer
-                    length_data = self.recv_bytes(4)
-                    if len(length_data) < 4:
-                        raise RuntimeError("Failed to read filename length")
-                    name_len = int.from_bytes(length_data, 'big')
-
-                    # Read filename 
-                    name_bytes = b''
-                    while len(name_bytes) < name_len:
-                        chunk = self.recv_bytes(name_len - len(name_bytes))
-                        if not chunk:
-                            raise RuntimeError("Connection lost while reading filename")
-                        name_bytes += chunk
-                    filename = name_bytes.decode('utf-8')
-
-                    # Read file size 
-                    size_data = self.recv_bytes(4)
-                    if len(size_data) < 4:
-                        raise RuntimeError("Failed to read file size")
-                    file_size = int.from_bytes(size_data, 'big')
+                
+                elif cmd == b'\x01':   # File incoming
+                    name_len = int.from_bytes(await recv_exact(4), 'big')
+                    filename = (await recv_exact(name_len)).decode('utf-8')
+                    filesize = int.from_bytes(await recv_exact(4), 'big')
 
                     # Recieve file
-                    print(f"Recieving {filename} ({file_size/(1024*1024):.2f} MB)....") 
-                    with open(dest_folder + '/' +  filename, "wb") as file:
-                        recieved = 0
-                        while recieved < file_size:
-                            chunk = self.recv_bytes(min(4096, file_size-recieved))
+                    print(f"Receiving {filename} ({filesize/(1024*1024):.2f} MB)....") 
+
+                    filepath = os.path.join(dest_folder, filename)
+                    with open(filepath, "wb") as f:
+                        received = 0
+                        while received < filesize:
+                            chunk = await loop.sock_recv(
+                                self.tcp_client_socket,
+                                min(65536, filesize - received)
+                            )
                             if not chunk:
-                                break
-                            file.write(chunk)
-                            recieved += len(chunk)
-                            await asyncio.sleep(0.1)
+                                raise ConnectionError("Connection lost mid-transfer")
+                            f.write(chunk)
+                            received += len(chunk)
+
                     return f"File {filename} recieved"
+
                 else:
-                    return f"Unknown command: {cmd}"
+                    return f"Unknown command: {cmd!r}"
 
         except asyncio.CancelledError:
-            raise asyncio.CancelledError
-            return f"Recieving {filename} was cancelled by user"
-            raise asyncio.CancelledError
+            try:
+                self.tcp_client_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            raise
+
+        except ConnectionError as e:
+            return str(e)
+
+        finally:
+            try:
+                self.tcp_client_socket.setblocking(True)
+            except OSError:
+                pass
         
             
 
@@ -428,6 +436,10 @@ class ConsoleView:
     def show_message(msg):
         print(msg)
 
+    @staticmethod
+    def get_input():
+        return key_pressed()
+
 class XenderController():
     def __init__(self, username):
         self.model = NetworkManager(username)
@@ -437,7 +449,6 @@ class XenderController():
     async def run(self):
         while self.running:
             choice = self.view.show_menu()
-            print(choice)
             if choice == '1':
                 self.view.show_message("\nScanning for devices... (press 'q' to stop)")
                 devices = self.model.scan()
@@ -451,15 +462,54 @@ class XenderController():
                 else:
                     self.view.show_message("No devices found.")
             elif choice and choice == '2':
-                if self.model.broadcast():
-                    self.view.show_message("Connected to a device.")
-                    await self.transfer_loop()
+                self.view.show_message("\nBroadcasting to network... (press q to go back to previous menu)")
+                self.model.init_bd_socks()
+                username_bytes = self.name.encode('utf-8')
+                message = bytes([len(username_bytes)]) + username_bytes + b"XENDER_DISCOVERY_REQUEST"
+                while True:
+                    input = self.view.get_input()
+                    if input == "q":
+                        break
+                    try:
+                        if conn := self.model.broadcast(message):
+                            choice == self.view.ask_yes_no(f"\nAccept connection from '{conn}' \n[1] Yes \n[2] No")
+                            if   choice == "1":
+                                self.view.show_message(f"Connecting to {conn}...")
+                                break
+                            elif choice == "2":
+                                self.view.show_message("User refused connection.")
+                                self.view.show_message("\nBroadcasting to network... (press q to go back to previous menu)")
+                        else:
+                            continue
+                    except socket.timeout:
+                        continue
+
+                # Connect to device
+                while True:
+                    input = self.view.get_input()
+                    if input == "q":
+                        break
+                    try:
+                        self.model.bd_connect()
+                        break
+                    except socket.timeout:
+                        continue
+                    except Exception as e:
+                        self.view.show_message(f"Error connecting to {conn}.")
+                        break
+                    
+                await self.transfer_loop()
+
             elif choice and choice == '3':
                 self.view.show_message("Goodbye!")
                 self.running = False
                 self.model.udp_socket.close()
                 if self.model.tcp_client_socket:
                     self.model.tcp_client_socket.close()
+                if self.model.ctrl_socket:
+                    self.model.ctrl_socket.close()
+                if self.model.conn:
+                    self.model.conn.close()
                 break
 
     async def try_send(self):
@@ -472,22 +522,22 @@ class XenderController():
                 return
 
             # Cannot send more than 99 files
-            # Increase no of files that can be sent on the net
             no_files = len(file_paths)
             if   1 <= no_files < 9:
                 no_files_bytes = ("0"+str(no_files)).encode('utf-8')
             elif 10 <= no_files <= 99:
                 no_files_bytes = str(no_files).encode('utf-8')
             else:
+                self.view.show_message("Too many files selected (max 99).")
                 return
             self.model.send_bytes(no_files_bytes)
-            
+
+            cancelled = False
             for file_obj in file_paths:
                 name = os.path.basename(file_obj.name)
                 path = file_obj.name
                 try:
                     self.view.show_message(f"Sending {name}... (press 'q' to stop)")
-                    # self.model._send_file(name, path)
                     send_file = asyncio.create_task(self.model._send_file(name, path))
                     pressed_key = asyncio.create_task(async_key_pressed())
                     done, pending = await asyncio.wait(
@@ -497,23 +547,30 @@ class XenderController():
                     
                     for task in pending:
                         task.cancel()
+                        try:
+                            await task
+                        except (asyncio.CancelledError, Exception):
+                            pass
     
                     if send_file in done:
                         result = send_file.result()
                         self.view.show_message(f"{result}")
+                        cancelled = True
                         
                     elif key_pressed in done:
                         self.view.show_message("Sending stopped by user.")
+                        cancelled = True
 
-                except KeyboardInterrupt:
-                    self.view.show_message(f"[*] Keyboard Interrupt detected, Transfer of {name} is terminated")
-                    continue
                 except Exception as e:
                     self.view.show_message(f"Error sending {name}: {e}")
-            self.model._send_end()
+
+            if not cancelled:
+                self.model._send_end()
 
     async def try_recieve(self):
         """Recieve files"""
+        self.model.clear_receive_buffer()
+
         # Prompt user for destination folder
         dest_folder = filedialog.askdirectory(title="Select destination folder")
         if dest_folder:
@@ -521,7 +578,6 @@ class XenderController():
         else:
             self.view.show_message(f"Invalid Destination folder")
 
-        self.model.clear_receive_buffer()
         
         # Recieve the number of files to recieve
         try:
@@ -537,7 +593,6 @@ class XenderController():
                 self.view.show_message(f"\nRecieving file {files_recieved}/{no_files_to_recieve}... (press 'q' to stop)")
                 recv_file = asyncio.create_task(self.model._recieve_file(dest_folder))
                 pressed_key = asyncio.create_task(async_key_pressed())
-                # self.view.show_message(self._recieve_file(dest_folder))
 
                 done, pending = await asyncio.wait(
                     {recv_file, pressed_key}, 
@@ -546,6 +601,10 @@ class XenderController():
 
                 for task in pending:
                     task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
                 if recv_file in done:
                     result = recv_file.result()
@@ -563,7 +622,7 @@ class XenderController():
             self.view.show_message("\n[1] Send files \n[2] Recieve files \n[3] Back to main")
             sel = self.view.get_selection(3)
             if   sel == 1:
-                await self.try_send()
+                await self.try_send()    
             elif sel == 2:
                 await self.try_recieve()
             elif sel == 3:break
