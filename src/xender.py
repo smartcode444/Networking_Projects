@@ -234,7 +234,7 @@ class NetworkManager:
             raise e
 
     async def watch_for_cancel(self):
-        """Runs concurrently during transfer - re"""
+        """Runs concurrently during transfer"""
         loop = asyncio.get_event_loop()
         ctrl = self.ctrl_socket or self.ctrl_conn
         ctrl.setblocking(False)
@@ -273,12 +273,15 @@ class NetworkManager:
         """Send a single file. Notifies reciever on cancellation"""
         loop = asyncio.get_event_loop()
         self.tcp_client_socket.setblocking(False)
-        self.cancel_flag.clear()
+        self._cancel_flag.clear()
 
         try:
             filesize = os.path.getsize(path)
             namebytes = name.encode('utf-8')
 
+            # ── Header ────────────────────────────────────────────────────────
+            # [0x01][4B name_len][name][8B file_size]
+            # 8 bytes for file_size supports files up to 16 exabytes
             header = (b'\x01' 
                        + len(namebytes).to_bytes(4, 'big') 
                        + namebytes
@@ -289,7 +292,7 @@ class NetworkManager:
                 sent = 0
                 while sent < filesize:
                     if self._cancel_flag.is_set(): # Check between chunks
-                        raise asyncio.CancelledError
+                        return f"Transfer of '{name}' stopped — cancelled by receiver"
                     chunk = f.read(65536)
                     if not chunk:
                         break
@@ -299,15 +302,11 @@ class NetworkManager:
             return f"Sent '{name}' sent successfully"
 
         except asyncio.CancelledError:
-            try:
-                self.tcp_client_socket.setblocking(True)
-                self.tcp_client_socket.send(b'\x03')
-            except OSError:
-                pass 
+            self.send_cancel_signal()
             raise
 
         except OSError as e:
-            raise RuntimeError(f"Connection lost - reciever may have cancelled")
+            raise RuntimeError(f"Socket error while sending '{name}', reciever may have cancelled: {e}")
 
         finally:
             try:
@@ -384,14 +383,11 @@ class NetworkManager:
                     return f"Unknown command: {cmd!r}"
 
         except asyncio.CancelledError:
-            try:
-                self.tcp_client_socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+            self.send_cancel_signal()
             raise
 
         except ConnectionError as e:
-            return str(e)
+            return f"Socket error: {e}"
 
         finally:
             try:
@@ -671,6 +667,7 @@ class XenderController():
                     self.view.show_message("Recieving stopped by user.")
 
             except Exception as e:
+                print(f"Error: {e}")
                 self.view.show_message(f"Error: {e}")
 
     async def transfer_loop(self):
