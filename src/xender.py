@@ -121,6 +121,7 @@ class NetworkManager:
         self.tcp_client_socket = None
         self.ctrl_socket       = None # accepted from broadcaster side
         self.ctrl_conn         = None # connected from scanner side
+        self._cancel_flag      = asyncio.Event()
 
         self.selected_mode     = None
 
@@ -189,68 +190,70 @@ class NetworkManager:
 
     def init_scan_socks(self):
         """Intialize sockets for scanning"""
+        self.selected_mode = "scan"
         self.tcp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
 
-    def scan(self) -> dict:
+    def scan(self, msg) -> dict:
         """Scan for devices on the network"""
-        self.selected_mode = "scan"
-
-        devices = {}
-
         try:
-            while True:
-                key = key_pressed()
-                if key and key.lower() == 'q':
-                    print("\nScanning stopped by user")
-                    break
-                
-                try:
-                    data, address      = self.udp_socket.recvfrom(1024)
-                    username_len       = data[0]
-                    client_name        = data[1:1+username_len].decode('utf-8')
-                    client_msg         = data[1+username_len:].decode('utf-8')
+            data, address      = self.udp_socket.recvfrom(1024)
+            username_len       = data[0]
+            client_name        = data[1:1+username_len].decode('utf-8')
+            client_msg         = data[1+username_len:].decode('utf-8')
 
-                    # Debug
-                    print(f"Address: {address}") 
-                    print(f"Recieved data: {data}, client_name: {client_name}, client_msg: {client_msg}")
-                    print(f"Found {len(devices)} devices")
+            # Debug
+            # print(f"Address: {address}") 
+            # print(f"Recieved data: {data}, client_name: {client_name}, client_msg: {client_msg}")
+            # print(f"Found {len(devices)} devices")
 
-                    msg = b"I_SEE_U" + self.name.encode('utf-8')
-                    if client_msg == "XENDER_DISCOVERY_REQUEST" and client_name not in devices:
-                        self.udp_socket.sendto(msg, (address))
-                        devices[client_name] = address
-                        print(f"Found {len(devices)} (press 'q' to stop scanning)")
+            if client_msg == "XENDER_DISCOVERY_REQUEST" and client_name not in devices:
+                self.udp_socket.sendto(msg, (address))                
+                return client_name, address
 
-                except socket.timeout:
-                    continue
-
-        except KeyboardInterrupt:
-            print("\n[*] Keyboard interrupt detected, Scanning operation terminated!")
+        except socket.timeout:
+            raise socket.timeout
 
         except Exception as e:
-            print(f"An error occured {e} in scan(), Scanning operation terminated!")
+            self.tcp_socket.close()
+            raise e
             
-        return devices
 
-    def connect(self, device_addr, device_name) -> bool:
-        
-        print(f"Connecting to {device_name}")
+    def connect(self, device_name, device_addr) -> bool:
+        try:
+            self.tcp_client_socket.settimeout(1.0)
+            self.tcp_client_socket.connect((device_addr, self.TCP_PORT))
 
-        while True:
-            try:
-                self.tcp_client_socket.settimeout(1.0)
-                self.tcp_client_socket.connect((device_addr, self.TCP_PORT))
-                print(f"Succesfully connected to {device_name}")
-                return True
+            self.ctrl_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.ctrl_conn.connect((device_addr, self.CTRL_PORT))
 
-            except socket.timeout:
-                # print("20s has elapsed")
-                continue
+        except socket.timeout:
+            raise socket.timeout
 
-            except Exception as e:
-                print(f"An error occured in {e} connect()")
-                return False
+        except Exception as e:
+            raise e
+
+    async def watch_for_cancel(self):
+        """Runs concurrently during transfer - re"""
+        loop = asyncio.get_event_loop()
+        ctrl = self.ctrl_socket or self.ctrl_conn
+        ctrl.setblocking(False)
+        try:
+            while True:
+                data = await loop.sock_recv(ctrl , 1)
+                if data == b'\x03':
+                    self._cancel_flag.set()
+                    return
+        except (OSError, asyncio.CancelledError):
+            raise
+
+    def send_cancel_signal(self):
+        """Reciever calls this to notify sender"""
+        ctrl = self.ctrl_socket or self.ctrl_conn
+        try:
+            ctrl.send(b'\x03')
+        except OSError:
+            pass
 
     def recv_bytes(self, no_bytes):
         return self.tcp_client_socket.recv(no_bytes)
@@ -270,6 +273,7 @@ class NetworkManager:
         """Send a single file. Notifies reciever on cancellation"""
         loop = asyncio.get_event_loop()
         self.tcp_client_socket.setblocking(False)
+        self.cancel_flag.clear()
 
         try:
             filesize = os.path.getsize(path)
@@ -284,6 +288,8 @@ class NetworkManager:
             with open(path, "rb") as f:
                 sent = 0
                 while sent < filesize:
+                    if self._cancel_flag.is_set(): # Check between chunks
+                        raise asyncio.CancelledError
                     chunk = f.read(65536)
                     if not chunk:
                         break
@@ -348,7 +354,7 @@ class NetworkManager:
                 if cmd   == b'\x03':   # CANCEL - sender stopped
                     return "Transfer cancelled by sender"
                 
-                elif cmd   == b'\x02':   # END - allf siles done
+                elif cmd == b'\x02':   # END - allf siles done
                     return "Transfer complete."
                 
                 elif cmd == b'\x01':   # File incoming
@@ -409,8 +415,11 @@ class ConsoleView:
         if not devices:
             print("No devices found.")
             return
+        print("Choose the device you wish to connect to")
         for idx, (name, addr) in enumerate(devices.items(), 1):
             print(f"[{idx}] {name} - {addr[0]}:{addr[1]}")
+
+        print("\npress 'q' to go back to previous menu")
 
     @staticmethod
     def get_selection(max_num):
@@ -451,16 +460,52 @@ class XenderController():
             choice = self.view.show_menu()
             if choice == '1':
                 self.view.show_message("\nScanning for devices... (press 'q' to stop)")
-                devices = self.model.scan()
+
+                self.model.init_scan_socks()
+                devices = {}
+                msg = b"I_SEE_U" + self.name.encode('utf-8')
+                while True:
+                    input = self.view.get_input()
+                    if input == 'q':
+                        self.view.show_message("\nScanning stopped by user.")
+                        break
+                    try:
+                        if data := self.model.scan(msg):
+                            name, addr = data
+                            devices[name] = addr
+                            self.view.show_message(f"Found {len(devices)} (press 'q' to stop scanning)")
+                    except socket.timeout:
+                        continue
+                    except Exception as e:
+                        self.view.show_message(f"Error scanning: {e}.")
+                        break
+
                 self.view.show_devices(devices)
                 if devices:
                     idx = self.view.get_selection(len(devices))
+                    if idx == 'q':
+                        break
                     selected_name = list(devices.keys())[idx-1]
-                    if self.model.connect(devices[selected_name][0], selected_name):
-                        self.view.show_message(f"Connected to {selected_name}")
-                        await self.transfer_loop()
+                    self.view.show_message(f"Connecting to {selected_name}... (press 'q' to stop)")
+                    while True:
+                        input = self.view.get_input()
+                        if input == 'q':
+                            self.view.show_message("\nUser refused connection")
+                            break
+                        try:
+                            self.model.connect(devices[selected_name][0], selected_name)
+                            self.view.show_message(f"Succesfully connected to {selected_name}")
+                            await self.transfer_loop()
+                            break
+                        except socket.timeout:
+                            continue
+                        except Exception as e:
+                            self.view.show_message(f"Error connecting to {selected_name}: {e}.")
+                            break
                 else:
                     self.view.show_message("No devices found.")
+
+
             elif choice and choice == '2':
                 self.view.show_message("\nBroadcasting to network... (press q to go back to previous menu)")
                 self.model.init_bd_socks()
@@ -468,13 +513,13 @@ class XenderController():
                 message = bytes([len(username_bytes)]) + username_bytes + b"XENDER_DISCOVERY_REQUEST"
                 while True:
                     input = self.view.get_input()
-                    if input == "q":
+                    if input == 'q':
+                        self.view.show_message("\nBroadcasting stopped by user")
                         break
                     try:
                         if conn := self.model.broadcast(message):
                             choice == self.view.ask_yes_no(f"\nAccept connection from '{conn}' \n[1] Yes \n[2] No")
                             if   choice == "1":
-                                self.view.show_message(f"Connecting to {conn}...")
                                 break
                             elif choice == "2":
                                 self.view.show_message("User refused connection.")
@@ -485,20 +530,23 @@ class XenderController():
                         continue
 
                 # Connect to device
+                self.view.show_message(f"Connecting to {conn}... (press 'q' to stop)")
                 while True:
                     input = self.view.get_input()
                     if input == "q":
+                        self.view.show_message("\nConnection stopped by user")
                         break
                     try:
                         self.model.bd_connect()
+                        await self.transfer_loop()
                         break
                     except socket.timeout:
                         continue
                     except Exception as e:
-                        self.view.show_message(f"Error connecting to {conn}.")
+                        self.view.show_message(f"Error connecting to {conn}: {e}.")
                         break
                     
-                await self.transfer_loop()
+
 
             elif choice and choice == '3':
                 self.view.show_message("Goodbye!")
@@ -511,6 +559,7 @@ class XenderController():
                 if self.model.conn:
                     self.model.conn.close()
                 break
+
 
     async def try_send(self):
             """Send files"""
@@ -536,12 +585,14 @@ class XenderController():
             for file_obj in file_paths:
                 name = os.path.basename(file_obj.name)
                 path = file_obj.name
+                self.view.show_message(f"Sending {name}... (press 'q' to stop)")
                 try:
-                    self.view.show_message(f"Sending {name}... (press 'q' to stop)")
                     send_file = asyncio.create_task(self.model._send_file(name, path))
                     pressed_key = asyncio.create_task(async_key_pressed())
+                    watch_cancel = asyncio.create_task(self.model.watch_for_cancel())
+
                     done, pending = await asyncio.wait(
-                        {send_file, pressed_key}, 
+                        {send_file, pressed_key, watch_cancel}, 
                         return_when=asyncio.FIRST_COMPLETED
                     )
                     
@@ -555,17 +606,22 @@ class XenderController():
                     if send_file in done:
                         result = send_file.result()
                         self.view.show_message(f"{result}")
-                        cancelled = True
+                        self.model._send_end()
+                        # cancelled 
                         
-                    elif key_pressed in done:
+                    elif pressed_key in done:
                         self.view.show_message("Sending stopped by user.")
-                        cancelled = True
+                        # cancelled = True
+
+                    elif watch_cancel in done:
+                        self.view.show_message("Transfer cancelled by reciever.")
+                        break
 
                 except Exception as e:
                     self.view.show_message(f"Error sending {name}: {e}")
 
-            if not cancelled:
-                self.model._send_end()
+            # if not cancelled:
+            #     self.model._send_end()
 
     async def try_recieve(self):
         """Recieve files"""
@@ -610,7 +666,8 @@ class XenderController():
                     result = recv_file.result()
                     self.view.show_message(f"{result}")
                     
-                elif key_pressed in done:
+                elif pressed_key in done:
+                    self.model.send_cancel_signal()
                     self.view.show_message("Recieving stopped by user.")
 
             except Exception as e:
