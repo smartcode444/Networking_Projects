@@ -8,8 +8,8 @@ Summary
 
 Key files
 ---------
-- `src/Zender.py` — main implementation (discovery, connection, transfer, console UI).
-- `test/test_Zender.py` — interactive test/demo for sending/receiving sockets.
+- `src/xender.py` — main implementation (discovery, connection, transfer, console UI).
+- `test/test_xender.py` — interactive test/demo for sending/receiving sockets.
 
 Features
 --------
@@ -55,25 +55,25 @@ Usage notes
 - Main menu: `[1] Scan` to look for nearby devices, `[2] Broadcast` to advertise and accept a connection, `[3] Exit`.
 - After connecting, choose `[1] Send files` to open a file dialog and send one or more files, or `[2] Receive files` to pick a destination folder and receive incoming files.
 - On the console prompts, press `q` to cancel scans or receives where supported.
-- The tool uses a simple framed protocol: command byte (0x01=file), 4-byte filename-length, filename, 4-byte filesize, file bytes.
+- The tool uses a simple framed protocol: command byte (0x01=file), 4-byte filename-length, filename, 8-byte filesize, file bytes.
 
 Testing / Demo
 --------------
-- The included `test/test_Zender.py` file acts as an interactive demo to create a listening or connecting socket. Run it and follow on-screen prompts:
+- The included `test/test_xender.py` file acts as an interactive demo to create a listening or connecting socket. Run it and follow on-screen prompts:
 
 ```powershell
-python -m pytest test/test_Zender.py -q
+python -m pytest test/test_xender.py -q
 ```
 
 Or run two terminals manually:
 
 - Terminal A (listener):
   ```powershell
-  python -m src.Zender   # choose Broadcast and accept
+  python -m src.xender   # choose Broadcast and accept
   ```
 - Terminal B (sender):
   ```powershell
-  python -m src.Zender   # choose Scan and connect, then Send files
+  python -m src.xender   # choose Scan and connect, then Send files
   ```
 
 Notes & caveats
