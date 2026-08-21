@@ -8,8 +8,8 @@ Summary
 
 Key files
 ---------
-- `src/Zender.py` — main implementation (discovery, connection, transfer, console UI).
-- `test/test_Zender.py` — interactive test/demo for sending/receiving sockets.
+- `src/xender.py` — main implementation (discovery, connection, transfer, console UI).
+- `test/test_xender.py` — interactive test/demo for sending/receiving sockets.
 
 Features
 --------
