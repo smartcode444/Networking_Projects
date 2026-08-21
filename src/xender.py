@@ -12,19 +12,23 @@ import asyncio
 import tkinter as tk
 import os, sys
 import netifaces
+import time
 import logging
+import random
 # from . import WHconn
 # from . import hotspot
 import WHconn
 import hotspot
-# from color import fg, bg
+import colorama
 from tkinter import filedialog
 from datetime import datetime
-import time
-import random
+from colorama import Fore, Back, Style
+# from color import fg, bg
 
 root = tk.Tk()
 root.withdraw()
+
+colorama.init(autoreset=True)
 
 SPINNER = ["-", "\\", "|", "/"]
 MENU_W  = 52   # box width
@@ -244,7 +248,7 @@ class NetworkManager:
                 sent = 0
                 while sent < filesize:
                     if self._cancel_flag.is_set(): # Check between chunks
-                        return f"\n[!] Transfer of '{name}' stopped"
+                        return Back.RED + f"\n[!] Transfer of '{name}' stopped"
                     chunk = f.read(65536)
                     if not chunk:
                         break
@@ -254,14 +258,14 @@ class NetworkManager:
                         on_progress(sent, filesize, start)
                     
 
-            return f"\n[OK] Sent '{name}' sent successfully"
+            return Back.GREEN + f"\n Sent '{name}' sent successfully"
 
         except asyncio.CancelledError:
             self.send_cancel_signal()
             raise
 
         except OSError as e:
-            raise RuntimeError(f"\n[!] Error while sending '{name}'")
+            raise RuntimeError(Back.RED + f"\n[!] Error while sending '{name}'")
 
         finally:
             try:
@@ -295,7 +299,7 @@ class NetworkManager:
             while len(buf) < n:
                 chunk = await loop.sock_recv(self.tcp_client_socket, n - len(buf))
                 if not chunk:
-                    raise ConnectionError("[!] Connection closed by sender")
+                    raise ConnectionError(Back.RED + "[!] Connection closed by sender")
                 buf += chunk
             return buf
 
@@ -304,13 +308,13 @@ class NetworkManager:
                 cmd = await  loop.sock_recv(self.tcp_client_socket, 1)
 
                 if not cmd:
-                    return "\n[!] Connection closed by Sender"
+                    return Back.RED + "\n[!] Connection closed by Sender"
 
                 if cmd   == b'\x03':   # CANCEL - sender stopped
-                    return "\n[!] Transfer cancelled by sender"
+                    return Back.RED + "\n[!] Transfer cancelled by sender"
                 
                 elif cmd == b'\x02':   # END - allf siles done
-                    return "\n[OK] Transfer complete."
+                    return Back.GREEN + "\n[OK] Transfer complete."
                 
                 elif cmd == b'\x01':   # File incoming
                     name_len = int.from_bytes(await recv_exact(4), 'big')
@@ -330,16 +334,16 @@ class NetworkManager:
                                 min(65536, filesize - received)
                             )
                             if not chunk:
-                                raise ConnectionError("\n[!] Connection lost mid-transfer")
+                                raise ConnectionError(Back.RED + "\n[!] Connection lost mid-transfer")
                             f.write(chunk)
                             received += len(chunk)
                             if on_progress:
                                 on_progress(received, filesize, start)
 
-                    return f"\n[Ok] File {filename} recieved"
+                    return Back.GREEN + f"\n[OK] File {filename} recieved"
 
                 else:
-                    return f"\n[!] Unknown command: {cmd!r}"
+                    return Back.RED + f"\n[!] Unknown command: {cmd!r}"
 
         except asyncio.CancelledError:
             self.send_cancel_signal()
@@ -413,7 +417,7 @@ class ConsoleView:
     @staticmethod
     def show_devices(devices):
         if not devices:
-            print("\n  [!]  No devices found.\n")
+            print("\n Back.RED +  [!]  No devices found.\n")
             return
         rows = [f"[{i}]  {name}  ({addr[0]})"
                 for i, (name, addr) in enumerate(devices.items(), 1)]
@@ -508,7 +512,7 @@ class XenderController():
                     user_key = self.view.get_input()
                     if user_key == 'q':
                         self.view.end_inline()        # move off spinner line
-                        self.view.show_message("[!]  Scanning stopped.")
+                        self.view.show_message(Back.RED + "[!]  Scanning stopped.")
                         break
 
                     try:
@@ -520,7 +524,7 @@ class XenderController():
                         continue
                     except Exception as e:
                         self.view.end_inline()
-                        self.view.show_message(f"[!]  Error scanning: {e}")
+                        self.view.show_message(Back.RED + f"[!]  Error scanning: {e}")
                         break
 
                 self.view.end_inline()
@@ -535,17 +539,17 @@ class XenderController():
                     while True:
                         user_key = self.view.get_input()
                         if user_key == 'q':
-                            self.view.show_message("\n[!] User refused connection")
+                            self.view.show_message(Back.RED + "\n[!] User refused connection")
                             break
                         try:
                             self.model.sc_connect(devices[selected_name][0])
-                            self.view.show_message(f"[OK] Succesfully connected to {selected_name}")
+                            self.view.show_message(Back.GREEN + f"[OK] Succesfully connected to {selected_name}")
                             await self.transfer_loop()
                             break
                         except socket.timeout:
                             continue
                         except Exception as e:
-                            self.view.show_message(f"[!] Error connecting to {selected_name}: {e}.")
+                            self.view.show_message(Back.RED + f"[!] Error connecting to {selected_name}: {e}.")
                             break
 
 
@@ -572,7 +576,7 @@ class XenderController():
                             if   choice == "1":
                                 break
                             elif choice == "2":
-                                self.view.show_message("[!] User refused connection.")
+                                self.view.show_message(Back.RED + "[!] User refused connection.")
                                 self.view.show_message("\nBroadcasting to network... (press q to go back to previous menu)")
                         else:
                             continue
@@ -585,7 +589,7 @@ class XenderController():
                     while True:
                         user_key = self.view.get_input()
                         if user_key == "q":
-                            self.view.show_message("\n[!] Connection stopped by user")
+                            self.view.show_message(Back.RED + "\n[!] Connection stopped by user")
                             break
                         try:
                             self.model.bd_connect()
@@ -594,7 +598,7 @@ class XenderController():
                         except socket.timeout:
                             continue
                         except Exception as e:
-                            self.view.show_message(f"[!] Error connecting to {conn}: {e}.")
+                            self.view.show_message(Back.RED + f"[!] Error connecting to {conn}: {e}.")
                             break
                     
 
@@ -655,19 +659,19 @@ class XenderController():
                     if send_file in done:
                         result = send_file.result()
                         self.view.end_inline()      # move off progress bar line
-                        self.view.show_message(send_file.result())
+                        self.view.show_message(result)
                         
                     elif pressed_key in done:
-                        self.view.show_message("[!] Sending stopped by user.")
+                        self.view.show_message(Back.RED + "[!] Sending stopped by user.")
                         cancelled = True
                         break
 
                     elif watch_cancel in done:
-                        self.view.show_message("[!] Transfer cancelled by reciever.")
+                        self.view.show_message(Back.RED + "[!] Transfer cancelled by reciever.")
                         break
 
                 except Exception as e:
-                    self.view.show_message(f"[!] Error sending {name}: {e}")
+                    self.view.show_message(Back.RED + f"[!] Error sending {name}: {e}")
 
             if not cancelled:
                 self.model._send_end()
@@ -679,9 +683,9 @@ class XenderController():
         # Prompt user for destination folder
         dest_folder = filedialog.askdirectory(title="Select destination folder")
         if dest_folder:
-            self.view.show_message(f"[OK] Destination folder {dest_folder}")
+            self.view.show_message(Back.GREEN + f"[OK] Destination folder {dest_folder}")
         else:
-            self.view.show_message(f"[!] Invalid Destination folder")
+            self.view.show_message(Back.RED + f"[!] Invalid Destination folder")
 
         
         # Recieve the number of files to recieve
@@ -723,15 +727,15 @@ class XenderController():
                     
                 elif pressed_key in done:
                     self.model.send_cancel_signal()
-                    self.view.show_message("[!] Recieving stopped by user.")
+                    self.view.show_message(Back.RED + "[!] Recieving stopped by user.")
 
                 elif watch_cancel in done:
-                    self.view.show_message("[!]  Transfer cancelled by sender.")
+                    self.view.show_message(Back.RED + "[!]  Transfer cancelled by sender.")
                     break
 
             except Exception as e:
                 print(f"Error: {e}")
-                self.view.show_message(f"[!] Error: {e}")
+                self.view.show_message(Back.RED + f"[!] Error: {e}")
 
     async def transfer_loop(self):
         """Transfer files"""
@@ -751,13 +755,13 @@ def on_hotspot():
     """Activate hotspot"""
     # Check if is_admin
     if not hotspot.is_admin():
-        print("[!] ERROR: This script must be run as Administrator to activate Hotspot.")
-        print("Please right-click the script and select 'Run as administrator'.")
+        print(Back.RED + "[!] ERROR: This script must be run as Administrator to activate Hotspot.")
+        print(Back.RED + "Please right-click the script and select 'Run as administrator'.")
         return
 
     # Check driver support
     if not hotspot.get_driver_info():
-        print("[!] ERROR: Your Wi-Fi adapter does not support Hosted Network.")
+        print("Back.REDBack.RED +  [!] ERROR: Your Wi-Fi adapter does not support Hosted Network.")
         print("Please check your driver or use a different adapter.")
         return
 
@@ -767,7 +771,7 @@ def on_hotspot():
     if status == "started":
         clients = hotspot.get_connected_clients()
         print("\n" + "="*50)
-        print("[OK] HOTSPOT IS ALREADY ACTIVE")
+        print(Back.GREEN + "[OK] HOTSPOT IS ALREADY ACTIVE")
         print("="*50)
         print(f"  SSID            : {ssid if ssid else 'Unknown'}")
         print(f"  Password        : {key if key else 'Unknown'}")
@@ -794,7 +798,7 @@ def on_hotspot():
 
         # Start the Hosted Network
         if hotspot.start_hosted_network():
-            print("\n[OK] Hotspot started successfully.")
+            print(Back.GREEN + "\n[OK] Hotspot started successfully.")
             print("You can now connect other devices using the above SSID and password.")
             print("(Internet access will not be available unless you enable ICS manually.)")
         else:
@@ -818,7 +822,7 @@ def check_wifi_hotspot():
     # Determine status 
     # Case 1: Device is the hotspot and has at least one client connected
     if hosted_started and client_count > 0:
-        print("\n[OK] Your device is acting as a Wi-Fi hotspot.")
+        print(Back.GREEN + "\n[OK] Your device is acting as a Wi-Fi hotspot.")
         print(f"   Hotspot SSID   : {hosted_ssid if hosted_ssid else 'Unknown'}")
         print(f"   Password       : {hosted_password if hosted_password else 'Unknown'}")
         print(f"   Connected devices: {client_count}")
@@ -843,7 +847,7 @@ def check_wifi_hotspot():
         # already handled above, but just in case
         pass
     elif client_state == "connected":
-        print(f"  [OK] You are connected to Wi-Fi network: {client_ssid}")
+        print(Back.GREEN + f"  [OK] You are connected to Wi-Fi network: {client_ssid}")
         print("   (But This does not appear to be a hotspot from a Supported device.)")
     else:
         print("   Wi-Fi is either off or not connected to any network.")
@@ -939,12 +943,12 @@ def cls():
         subprocess.run('cls', shell=True)
     else:
         subprocess.run(['clear'])
-    print("███████╗███████╗███╗   ██╗███████╗███████╗███████╗")
-    print("    ██╔╝██╔════╝████╗  ██║██╔══██║██╔════╝██╔══██║")
-    print("   ██╔╝ █████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝")
-    print("  ██╔╝  ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗")
-    print("███████╗███████╗██║ ╚████║███████║███████╗██║  ██║")
-    print("╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝")
+    print(Style.BRIGHT + "███████╗███████╗███╗   ██╗███████╗███████╗███████╗")
+    print(Style.BRIGHT + "    ██╔╝██╔════╝████╗  ██║██╔══██║██╔════╝██╔══██║")
+    print(Style.BRIGHT + "   ██╔╝ █████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝")
+    print(Style.BRIGHT + "  ██╔╝  ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗")
+    print(Style.BRIGHT + "███████╗███████╗██║ ╚████║███████║███████╗██║  ██║")
+    print(Style.BRIGHT + "╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝")
     print(f"Welcome {USERNAME}!")
 
 if __name__ == "__main__":
