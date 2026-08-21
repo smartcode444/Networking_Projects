@@ -6,7 +6,7 @@
 ███████╗███████╗██║ ╚████║███████╗███████╗██║  ██║
 ╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝
 """
-
+import subprocess
 import socket
 import asyncio
 import tkinter as tk
@@ -20,11 +20,17 @@ import hotspot
 # from color import fg, bg
 from tkinter import filedialog
 from datetime import datetime
-
 import time
+import random
+
+root = tk.Tk()
+root.withdraw()
 
 SPINNER = ["-", "\\", "|", "/"]
 MENU_W  = 52   # box width
+
+adjectives = ["Happy", "Clever", "Brave", "Calm", "Eager", "Fierce", "Gentle", "Jolly", "Kind", "Lively"]
+nouns = ["Panda", "Tiger", "Eagle", "River", "Comet", "Shadow", "Falcon", "Summit", "Ocean", "Breeze"]
 
 # Force UTF-8 on Windows so box-drawing chars render in modern terminals
 if os.name == 'nt':
@@ -33,89 +39,17 @@ if os.name == 'nt':
     except Exception:
         pass
 
-root = tk.Tk()
-root.withdraw()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("zender.log"), logging.StreamHandler(sys.stdout)]
-)
-logger = logging.getLogger("Zender")
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(asctime)s [%(levelname)s] %(message)s",
+#     handlers=[logging.FileHandler("zender.log"), logging.StreamHandler(sys.stdout)]
+# )
+# logger = logging.getLogger("Zender")
 
 # logger.info("This is a info message")
 # logger.debug("This is a debug message")
 # logger.warning("This is a warning message")
 # logger.error("This is a error message")
-
-def log(msg):
-    """Print with timestamp"""
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}")
-
-def get_broadcast_address():
-    for interface in netifaces.interfaces():
-        addrs = netifaces.ifaddresses(interface)
-        if netifaces.AF_INET in addrs:
-            for addr in addrs[netifaces.AF_INET]:
-                ip = addr['addr']
-                netmask = addr.get('netmask')
-                broadcast = addr.get('broadcast')
-                if broadcast and not ip.startswith('127.'):
-                    return broadcast
-    return "255.255.255.255"  # fallback
-
-
-def key_pressed() -> bool | str:
-    """Return the character if a key was pressed, else None."""
-    try:
-        if os.name == 'nt':
-            import msvcrt
-            if msvcrt.kbhit():
-                return msvcrt.getch().decode('utf-8', errors='ignore')
-            return None
-        else:
-            # Unix
-            import select
-            rlist, _, _ = select.select([sys.stdin], [], [], 0)
-            if rlist:
-                return sys.stdin.read(1)
-            return None
-        
-    except KeyboardInterrupt:
-        return None
-
-async def async_key_pressed() -> str | None:
-    """Return the character if a key was pressed, else None."""
-    try:
-        if os.name == 'nt':
-            import msvcrt
-            while True:
-                try:
-                    if msvcrt.kbhit():
-                        key = msvcrt.getch().decode('utf-8', errors='ignore')
-                        if key == 'q':
-                            return 
-
-                    await asyncio.sleep(0.05)
-                except asyncio.CancelledError:
-                    raise
-
-        else:
-            while True:
-                try:
-                    # Unix
-                    import select, sys
-                    rlist, _, _ = select.select([sys.stdin], [], [], 0)
-                    if rlist:
-                        key =  sys.stdin.read(1)
-                        if key == 'q':
-                            return 
-                    await asyncio.sleep(0.05)
-                except asyncio.CancelledError:
-                    raise
-
-    except KeyboardInterrupt:
-            return None
 
 class NetworkManager:
     def __init__(self, username: str):
@@ -425,6 +359,7 @@ class NetworkManager:
 class ConsoleView:
     @staticmethod
     def _box(title, rows):
+        # cls()
         w      = MENU_W
         border = "+" + "-" * (w - 2) + "+"
         mid    = "+" + "-" * (w - 2) + "+"
@@ -554,6 +489,7 @@ class XenderController():
         while self.running:
             choice = self.view.show_menu()
             if choice == '1':
+                cls()
                 self.model.init_scan_socks()
                 devices = {}
                 msg    = b"I_SEE_U" + self.username.encode('utf-8')
@@ -614,11 +550,18 @@ class XenderController():
 
 
             elif choice and choice == '2':
-                self.view.show_message("\nBroadcasting to network... (press q to stop broadcasting)")
+                cls()
+                # self.view.show_message("\nBroadcasting to network... (press q to stop)")
                 self.model.init_bd_socks()
                 username_bytes = self.username.encode('utf-8')
                 message = bytes([len(username_bytes)]) + username_bytes + b"XENDER_DISCOVERY_REQUEST"
+                spin_i = 0
+
                 while True:
+                    self.view.show_inline(
+                        f"{SPINNER[spin_i % len(SPINNER)]}  Broadcasting... (press q to stop)"
+                    )
+                    spin_i += 1  
                     user_key = self.view.get_input()
                     if user_key == 'q':
                         self.view.show_message("\nBroadcasting stopped by user")
@@ -793,6 +736,7 @@ class XenderController():
     async def transfer_loop(self):
         """Transfer files"""
         while True:
+            cls()
             self.view.show_message("\nTransfer FILES \n[1] Send files \n[2] Recieve files \n[3] Back to main")
             sel = self.view.get_selection(3)
             if   sel == 1:
@@ -801,60 +745,65 @@ class XenderController():
                 await self.try_recieve()
             elif sel == 3:break
 
+
+
 def on_hotspot():
-        # Check if is_admin
-        if not hotspot.is_admin():
-            print("[!] ERROR: This script must be run as Administrator to manage Hotspot connection.")
-            print("Please right-click the script and select 'Run as administrator'.")
-            return
+    """Activate hotspot"""
+    # Check if is_admin
+    if not hotspot.is_admin():
+        print("[!] ERROR: This script must be run as Administrator to activate Hotspot.")
+        print("Please right-click the script and select 'Run as administrator'.")
+        return
 
-        # Check driver support
-        if not hotspot.get_driver_info():
-            print("[!] ERROR: Your Wi-Fi adapter does not support Hosted Network.")
-            print("Please check your driver or use a different adapter.")
-            return
+    # Check driver support
+    if not hotspot.get_driver_info():
+        print("[!] ERROR: Your Wi-Fi adapter does not support Hosted Network.")
+        print("Please check your driver or use a different adapter.")
+        return
 
-        status    = hotspot.get_hosted_network_status()
-        ssid, key = hotspot.get_current_hosted_settings()
+    status    = hotspot.get_hosted_network_status()
+    ssid, key = hotspot.get_current_hosted_settings()
 
-        if status == "started":
-            clients = hotspot.get_connected_clients()
-            print("\n" + "="*50)
-            print("[OK] HOTSPOT IS ALREADY ACTIVE")
-            print("="*50)
-            print(f"  SSID            : {ssid if ssid else 'Unknown'}")
-            print(f"  Password        : {key if key else 'Unknown'}")
-            print(f"  Connected devices: {clients}")
-            print("="*50)
-            print("No changes were made to your system.")
-            return  # Exit gracefully without touching anything
+    if status == "started":
+        clients = hotspot.get_connected_clients()
+        print("\n" + "="*50)
+        print("[OK] HOTSPOT IS ALREADY ACTIVE")
+        print("="*50)
+        print(f"  SSID            : {ssid if ssid else 'Unknown'}")
+        print(f"  Password        : {key if key else 'Unknown'}")
+        print(f"  Connected devices: {clients}")
+        print("="*50)
+        print("No changes were made to your system.")
+        return  # Exit gracefully without touching anything
 
-        # If not started, display current status and proceed
-        print(f"Hotspot status: {status.capitalize()}. Setting up and starting...")
+    # If not started, display current status and proceed
+    print(f"Hotspot status: {status.capitalize()}. Setting up and starting...")
 
-        # Get or create configuration
-        if ssid and key:
-            print(f"Using existing configuration:")
-            print(f"  SSID     : {ssid}")
-            print(f"  Password : {key}")
+    # Get or create configuration
+    if ssid and key:
+        print(f"Using existing configuration:")
+        print(f"  SSID     : {ssid}")
+        print(f"  Password : {key}")
+    else:
+        ssid = hotspot.generate_random_ssid()
+        key = hotspot.generate_random_key()
+        print("No existing Hosted Network found. Creating new one...")
+        hotspot.set_hosted_network(ssid, key)
+        print(f"  SSID     : {ssid}")
+        print(f"  Password : {key}")
+
+        # Start the Hosted Network
+        if hotspot.start_hosted_network():
+            print("\n[OK] Hotspot started successfully.")
+            print("You can now connect other devices using the above SSID and password.")
+            print("(Internet access will not be available unless you enable ICS manually.)")
         else:
-            ssid = hotspot.generate_random_ssid()
-            key = hotspot.generate_random_key()
-            print("No existing Hosted Network found. Creating new one...")
-            hotspot.set_hosted_network(ssid, key)
-            print(f"  SSID     : {ssid}")
-            print(f"  Password : {key}")
+            print("\nHotspot could not be started. Check if another hotspot is already running.")
+            return
 
-            # Start the Hosted Network
-            if hotspot.start_hosted_network():
-                print("\n[OK] Hotspot started successfully.")
-                print("You can now connect other devices using the above SSID and password.")
-                print("(Internet access will not be available unless you enable ICS manually.)")
-            else:
-                print("\nHotspot could not be started. Check if another hotspot is already running.")
-                return
 
 def check_wifi_hotspot():
+    """Check Wifi-Hotspot Status"""
     print("\nChecking Wifi-Hotspot Status...")
 
     # Check if this device is hosting a hotspot 
@@ -906,22 +855,102 @@ def check_wifi_hotspot():
     # if client_state == "connected":
     #     print(f"   You are Connected to   : {client_ssid} (type: {client_network_type})")
 
-def cls(var=None):
+
+def get_broadcast_address():
+    for interface in netifaces.interfaces():
+        addrs = netifaces.ifaddresses(interface)
+        if netifaces.AF_INET in addrs:
+            for addr in addrs[netifaces.AF_INET]:
+                ip = addr['addr']
+                netmask = addr.get('netmask')
+                broadcast = addr.get('broadcast')
+                if broadcast and not ip.startswith('127.'):
+                    return broadcast
+    return "255.255.255.255"  # fallback
+
+
+def key_pressed() -> bool | str:
+    """Return the character if a key was pressed, else None."""
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            if msvcrt.kbhit():
+                return msvcrt.getch().decode('utf-8', errors='ignore')
+            return None
+        else:
+            # Unix
+            import select
+            rlist, _, _ = select.select([sys.stdin], [], [], 0)
+            if rlist:
+                return sys.stdin.read(1)
+            return None
+        
+    except KeyboardInterrupt:
+        return None
+
+async def async_key_pressed() -> str | None:
+    """Return the character if a key was pressed, else None."""
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            while True:
+                try:
+                    if msvcrt.kbhit():
+                        key = msvcrt.getch().decode('utf-8', errors='ignore')
+                        if key == 'q':
+                            return 
+
+                    await asyncio.sleep(0.05)
+                except asyncio.CancelledError:
+                    raise
+
+        else:
+            while True:
+                try:
+                    # Unix
+                    import select, sys
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0)
+                    if rlist:
+                        key =  sys.stdin.read(1)
+                        if key == 'q':
+                            return 
+                    await asyncio.sleep(0.05)
+                except asyncio.CancelledError:
+                    raise
+
+    except KeyboardInterrupt:
+            return None
+
+def generate_username():
+    adj = random.choice(adjectives)
+    noun = random.choice(nouns)
+    number = random.randint(10, 99)
+    
+    # Combine the words and number into a single username
+    return f"{adj}{noun}{number}"
+
+def log(msg):
+    """Print with timestamp"""
+    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}")
+
+def cls():
     """Clear screen"""
-    print("\033[2J\033[H", end="")      
+    if os.name == 'nt':
+        subprocess.run('cls', shell=True)
+    else:
+        subprocess.run(['clear'])
     print("███████╗███████╗███╗   ██╗███████╗███████╗███████╗")
     print("    ██╔╝██╔════╝████╗  ██║██╔══██║██╔════╝██╔══██║")
     print("   ██╔╝ █████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝")
     print("  ██╔╝  ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗")
     print("███████╗███████╗██║ ╚████║███████║███████╗██║  ██║")
     print("╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝")
+    print(f"Welcome {USERNAME}!")
 
 if __name__ == "__main__":
+    USERNAME = generate_username()
+    cls()
     
-    print("The best File-Transfer tool")
-    USERNAME = "smartcode"
-    
-    print(f"Welcome {USERNAME}!")
     xender = XenderController(USERNAME)
 
     check_wifi_hotspot()
@@ -930,6 +959,7 @@ if __name__ == "__main__":
     while True:
         key = key_pressed()
         if   key == "1":
+            cls()
             xender.running = True
             try:
                 asyncio.run(xender.run())
@@ -938,10 +968,12 @@ if __name__ == "__main__":
             ConsoleView.show_main_menu()
 
         elif key == "2":
+            cls()
             check_wifi_hotspot()
             ConsoleView.show_main_menu()
 
         elif key  == "3": 
+            cls()
             on_hotspot()
             ConsoleView.show_main_menu()
 
@@ -956,16 +988,6 @@ if __name__ == "__main__":
                 xender.model.ctrl_conn.close()
             break
 
-    print("Thank you or using zender!")            
+    print("Thank you for using zender!")            
     sys.exit()
 
-    
-
-
-
-    # print(f"{fg.GREEN}███████╗███████╗███╗   ██╗███████╗███████╗███████╗{fg.RESET}")
-    # print(f"{fg.GREEN}    ██╔╝██╔════╝████╗  ██║██╔══██╗██╔════╝██╔══██╗{fg.RESET}")
-    # print(f"{fg.GREEN}   ██╔╝ █████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝{fg.RESET}")
-    # print(f"{fg.GREEN}  ██╔╝  ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗{fg.RESET}")
-    # print(f"{fg.GREEN}███████╗███████╗██║ ╚████║███████╗███████╗██║  ██║{fg.RESET}")
-    # print(f"{fg.GREEN}╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝{fg.RESET}")
