@@ -3,13 +3,7 @@ import os
 import sys
 import asyncio
 
-# Get the directory of the current script (utils/)
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# Get the parent directory (my_project/)
-parent_dir = os.path.dirname(current_dir)
-# Add the parent directory to Python's search path
-sys.path.append(parent_dir)
-# Import from the folder using 'from folder.file import function'
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.xender import XenderController
 
 
@@ -35,6 +29,9 @@ def key_pressed() -> str | None:
 PORT = 8888
 CTRL_PORT = 8889
 IP = "127.0.0.1"
+
+USERNAME = "VICTOR"
+xender = XenderController(USERNAME)
 
 def listening_socket():
     # Create tcp socket, bind it and initiate a connection
@@ -81,7 +78,6 @@ def connect_socket():
 
     return tcp_client_socket, ctrl_conn
 
-xender = XenderController("victor")
 
 print("(1) Listening socket \n(2) Accepting socket \n(3) Exit")
 while True:
@@ -104,8 +100,6 @@ finally:
         xender.model.tcp_socket.close()
     if xender.model.udp_socket:
         xender.model.udp_socket.close()
-    if xender.model.ctrl_server:
-        xender.model.ctrl_server.close()
     if xender.model.ctrl_socket:
         xender.model.ctrl_socket.close()
     if xender.model.ctrl_conn:

@@ -15,13 +15,11 @@ import netifaces
 import time
 import logging
 import random
-# from . import WHconn
-# from . import hotspot
-import WHconn
-import hotspot
 import colorama
 from tkinter import filedialog
 from datetime import datetime
+from src import WHconn
+from src import hotspot
 from colorama import Fore, Back, Style
 # from color import fg, bg
 
@@ -452,7 +450,7 @@ class ConsoleView:
         speed   = (received / elapsed / (1024 * 1024)) if elapsed > 0.05 else 0.0
         bar_w   = 24
         filled  = int(bar_w * received / total)
-        bar     = (Back.GREEN + "#") * filled + (Back.WHITE + Fore.WHITE + "-") * (bar_w - filled)
+        bar     = (Back.GREEN + "#") * filled + (Back.WHITE + "-") * (bar_w - filled) + Back.RESET
         short   = label[:13]
         ConsoleView.show_inline(
             f"[{bar}] {pct:5.1f}%  {speed:5.1f} MB/s  {short}"
@@ -742,7 +740,6 @@ class XenderController():
     async def transfer_loop(self):
         """Transfer files"""
         while True:
-            cls()
             self.view.show_message("\nTransfer FILES \n[1] Send files \n[2] Recieve files \n[3] Back to main")
             sel = self.view.get_selection(3)
             if   sel == 1:
@@ -975,8 +972,10 @@ def cls():
     print(Style.BRIGHT + "╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═╝  ╚═╝")
     print(f"Welcome {USERNAME}!")
 
+USERNAME = generate_username()
+
+
 if __name__ == "__main__":
-    USERNAME = generate_username()
     cls()
     print_network_info()
     
