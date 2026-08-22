@@ -60,7 +60,7 @@ class NetworkManager:
         self.UDP_PORT          = 7007
         self.TCP_PORT          = 5005
         self.CTRL_PORT         = 5006
-        self.BROADCAST_ADDR             = get_broadcast_address()
+        self.INTERFACES        = get_all_broadcast_addresses()
 
         self.DISCOVERY_MESSAGE = "XENDER_DISCOVERY_REQUEST"
         self.RESPONSE_MESSAGE  = "I_SEE_U"
@@ -98,22 +98,28 @@ class NetworkManager:
 
 
     def broadcast(self, message) -> str:
-        """Broadcast message on network."""
+        """Send discovery packet on every interface, and wait for a respoonse"""
+        for brd_addr, _ in self.INTERFACES:
+            try:
+                self.udp_socket.sendto(message, (brd_addr , self.UDP_PORT))
+            except OSError:
+                pass # Interface may be down or unreachable
+
         try:
-            self.udp_socket.sendto(message, (self.BROADCAST_ADDR , self.UDP_PORT))
             data, addr = self.udp_socket.recvfrom(1024)
-            if not data.startswith(message):
-                data = data.decode('utf-8').strip()    
-                if data[:7] == "I_SEE_U":
-                    self.udp_socket.settimeout(20.0)
-                    device_name = data[7:]
-                    return device_name
-
         except socket.timeout:
-            raise socket.timeout
+            raise
 
-        # except Exception:            
+        # Filter out echoes of my own broadcast
+        if not data.startswith(message):
+            return None
 
+        decoded = data.decode('utf-8').strip()    
+        if decoded[:7] == "I_SEE_U":
+            device_name = data[7:]
+            return device_name
+
+        return None
 
     def bd_connect(self):
         self.tcp_socket.settimeout(1.0)   
@@ -148,27 +154,23 @@ class NetworkManager:
     def scan(self, msg, devices) -> tuple:
         """Scan for devices on the network."""
         try:
-            data, address      = self.udp_socket.recvfrom(1024)
-            username_len       = data[0]
-            client_name        = data[1:1+username_len].decode('utf-8')
-            client_msg         = data[1+username_len:].decode('utf-8')
-
-            # Debug
-            # print(f"Address: {address}") 
-            # print(f"Recieved data: {data}, client_name: {client_name}, client_msg: {client_msg}")
-            # print(f"Found {len(devices)} devices")
-
-            if client_msg == "XENDER_DISCOVERY_REQUEST" and client_name not in devices:
-                self.udp_socket.sendto(msg, (address))                
-                return client_name, address
-
+            data, address = self.udp_socket.recvfrom(1024)
         except socket.timeout:
             raise socket.timeout
+        
+        username_len  = data[0]
+        client_name   = data[1:1+username_len].decode('utf-8')
+        client_msg    = data[1+username_len:].decode('utf-8')
 
-        except Exception as e:
-            self.tcp_client_socket.close()
-            raise e
+        if client_msg == "XENDER_DISCOVERY_REQUEST" and client_name not in devices:
+            try:
+                self.udp_socket.sendto(msg, (address))
+            except OSError:
+                return None, None
             
+            return client_name, address
+
+        return None, None
 
     def sc_connect(self, device_addr):
         try:
@@ -322,7 +324,7 @@ class NetworkManager:
                     filesize = int.from_bytes(await recv_exact(8), 'big')
 
                     # Recieve file
-                    print(f"Receiving {filename} ({filesize/(1024*1024):.2f} MB)....") 
+                    print(Back.BLUE + f"Receiving {filename} ({filesize/(1024*1024):.2f} MB)....") 
 
                     start    = time.perf_counter()
                     filepath = os.path.join(dest_folder, filename)
@@ -450,7 +452,7 @@ class ConsoleView:
         speed   = (received / elapsed / (1024 * 1024)) if elapsed > 0.05 else 0.0
         bar_w   = 24
         filled  = int(bar_w * received / total)
-        bar     = "#" * filled + "-" * (bar_w - filled)
+        bar     = (Back.GREEN + "#") * filled + (Back.WHITE + Fore.WHITE + "-") * (bar_w - filled)
         short   = label[:13]
         ConsoleView.show_inline(
             f"[{bar}] {pct:5.1f}%  {speed:5.1f} MB/s  {short}"
@@ -499,12 +501,12 @@ class XenderController():
                 msg    = b"I_SEE_U" + self.username.encode('utf-8')
                 spin_i = 0
 
-                self.view.show_message("Scanning for devices... press 'q' to stop\n")
+                self.view.show_message(Back.BLUE + "Scanning for devices... press 'q' to stop\n")
 
                 msg = b"I_SEE_U" + self.username.encode('utf-8')
                 while True:
                     self.view.show_inline(
-                        f"{SPINNER[spin_i % len(SPINNER)]}  Scanning... {len(devices)} found"
+                        Back.BLUE + f"{SPINNER[spin_i % len(SPINNER)]}  Scanning... {len(devices)} found"
                     )
                     spin_i += 1  
 
@@ -535,7 +537,7 @@ class XenderController():
                     if idx == 'q':
                         continue
                     selected_name = list(devices.keys())[idx-1]
-                    self.view.show_message(f"Connecting to {selected_name}... (press 'q' to stop)")
+                    self.view.show_message(Back.BLUE + f"Connecting to {selected_name}... (press 'q' to stop)")
                     while True:
                         user_key = self.view.get_input()
                         if user_key == 'q':
@@ -563,21 +565,21 @@ class XenderController():
 
                 while True:
                     self.view.show_inline(
-                        f"{SPINNER[spin_i % len(SPINNER)]}  Broadcasting... (press q to stop)"
+                        Back.BLUE + f"{SPINNER[spin_i % len(SPINNER)]}  Broadcasting... (press q to stop)"
                     )
                     spin_i += 1  
                     user_key = self.view.get_input()
                     if user_key == 'q':
-                        self.view.show_message("\nBroadcasting stopped by user")
+                        self.view.show_message(Back.RED + "\nBroadcasting stopped by user")
                         break
                     try:
                         if conn := self.model.broadcast(message):
-                            choice = self.view.ask_yes_no(f"\nAccept connection from '{conn}'")
+                            choice = self.view.ask_yes_no(Back.BLUE + f"\nAccept connection from '{conn}'")
                             if   choice == "1":
                                 break
                             elif choice == "2":
                                 self.view.show_message(Back.RED + "[!] User refused connection.")
-                                self.view.show_message("\nBroadcasting to network... (press q to go back to previous menu)")
+                                self.view.show_message(Back.BLUE + "\nBroadcasting to network... (press q to go back to previous menu)")
                         else:
                             continue
                     except socket.timeout:
@@ -585,7 +587,7 @@ class XenderController():
 
                 # Connect to device
                 if choice == "1":
-                    self.view.show_message(f"Connecting to {conn}... (press 'q' to stop)")
+                    self.view.show_message(Back.BLUE + f"Connecting to {conn}... (press 'q' to stop)")
                     while True:
                         user_key = self.view.get_input()
                         if user_key == "q":
@@ -614,7 +616,7 @@ class XenderController():
                 title="Xender -> Select files",
             )
             if not file_paths:
-                self.view.show_message("No files selected.")
+                self.view.show_message(Back.RED + "No files selected.")
                 return
 
             # Cannot send more than 99 files
@@ -624,7 +626,7 @@ class XenderController():
             elif 10 <= no_files <= 99:
                 no_files_bytes = str(no_files).encode('utf-8')
             else:
-                self.view.show_message("Too many files selected (max 99).")
+                self.view.show_message(Back.RED + "Too many files selected (max 99).")
                 return
             self.model.send_bytes(no_files_bytes)
 
@@ -632,7 +634,7 @@ class XenderController():
                 name = os.path.basename(file_obj.name)
                 path = file_obj.name
                 filesize = os.path.getsize(file_obj.name)
-                self.view.show_message(f"[>>] Sending '{name}' ({filesize / (1024*1024):.1f} MB) (press 'q' to stop)")
+                self.view.show_message(Back.BLUE + f"[>>] Sending '{name}' ({filesize / (1024*1024):.1f} MB) (press 'q' to stop)")
 
                 try:
                     send_file = asyncio.create_task(
@@ -699,7 +701,7 @@ class XenderController():
         while files_recieved < no_files_to_recieve:
             files_recieved += 1 
             try:
-                self.view.show_message(f"\n[>>]Recieving file {files_recieved}/{no_files_to_recieve}... (press 'q' to stop)")
+                self.view.show_message(Back.BLUE + f"\n[>>]Recieving file {files_recieved}/{no_files_to_recieve}... (press 'q' to stop)")
                 recv_file = asyncio.create_task(
                     self.model._recieve_file(
                         dest_folder,
@@ -761,7 +763,7 @@ def on_hotspot():
 
     # Check driver support
     if not hotspot.get_driver_info():
-        print("Back.REDBack.RED +  [!] ERROR: Your Wi-Fi adapter does not support Hosted Network.")
+        print(Back.RED + "[!] ERROR: Your Wi-Fi adapter does not support Hosted Network.")
         print("Please check your driver or use a different adapter.")
         return
 
@@ -802,13 +804,13 @@ def on_hotspot():
             print("You can now connect other devices using the above SSID and password.")
             print("(Internet access will not be available unless you enable ICS manually.)")
         else:
-            print("\nHotspot could not be started. Check if another hotspot is already running.")
+            print(Back.RED+ "\nHotspot could not be started. Check if another hotspot is already running.")
             return
 
 
 def check_wifi_hotspot():
     """Check Wifi-Hotspot Status"""
-    print("\nChecking Wifi-Hotspot Status...")
+    print(Back.BLUE + "\nChecking Wifi-Hotspot Status...")
 
     # Check if this device is hosting a hotspot 
     hosted_started, hosted_ssid, hosted_password, client_count = WHconn.get_hosted_network_status()
@@ -833,7 +835,7 @@ def check_wifi_hotspot():
     if client_state == "connected" and client_ssid:
         if WHconn.is_hotspot_network(client_ssid, client_network_type):
             device_name = WHconn.guess_device_name(client_ssid)
-            print("\n Your device is connected to another device's hotspot.")
+            print(Back.BLUE + "\n[i] Your device is connected to another device's hotspot.")
             print(f"   Network name   : {client_ssid}")
             print(f"   Device         : {device_name}")
             print(f"   Network type   : {client_network_type if client_network_type else 'Unknown'}")
@@ -842,15 +844,15 @@ def check_wifi_hotspot():
     # Case 3: Neither – not part of any hotspot scenario
     # print("\n   Your device is NOT in a hotspot connection") # scenario.
     if hosted_started and client_count == 0:
-        print("   (Your hotspot is on, but no other devices are connected.)")
+        print("  " + Back.BLUE + "[i] (Your hotspot is on, but no other devices are connected.)")
     elif hosted_started and client_count > 0:
         # already handled above, but just in case
         pass
     elif client_state == "connected":
-        print(Back.GREEN + f"  [OK] You are connected to Wi-Fi network: {client_ssid}")
-        print("   (But This does not appear to be a hotspot from a Supported device.)")
+        print("  " + Back.GREEN + f"[OK] You are connected to Wi-Fi network: {client_ssid}")
+        print("  " + Back.BLUE + "[i] (But This does not appear to be a hotspot from a Supported device.)")
     else:
-        print("   Wi-Fi is either off or not connected to any network.")
+        print("  " + Back.BLUE + " [i] Wi-Fi is either off or not connected to any network.")
 
     # Additional details for debugging
     if hosted_started and client_count == 0:
@@ -860,17 +862,26 @@ def check_wifi_hotspot():
     #     print(f"   You are Connected to   : {client_ssid} (type: {client_network_type})")
 
 
-def get_broadcast_address():
-    for interface in netifaces.interfaces():
-        addrs = netifaces.ifaddresses(interface)
-        if netifaces.AF_INET in addrs:
-            for addr in addrs[netifaces.AF_INET]:
-                ip = addr['addr']
-                netmask = addr.get('netmask')
-                broadcast = addr.get('broadcast')
-                if broadcast and not ip.startswith('127.'):
-                    return broadcast
-    return "255.255.255.255"  # fallback
+def get_all_broadcast_addresses():
+    """
+    Return broadcast addresses for every active non-loopback interface.
+    On a hotspot host this returns BOTH the main adapter and virtual
+    hotspot adapter addresses, so discovery works regardless of who
+    initiates the scan.
+    """
+    result = []
+    seen   = set()
+    for iface in netifaces.interfaces():
+        addrs = netifaces.ifaddresses(iface)
+        if netifaces.AF_INET not in addrs:
+            continue
+        for addr in addrs[netifaces.AF_INET]:
+            ip  = addr.get('addr', '')
+            brd = addr.get('broadcast')
+            if brd and not ip.startswith('127.') and brd not in seen:
+                result.append((brd, ip))   # keep (broadcast, own_ip) pair
+                seen.add(brd)
+    return result or [('255.255.255.255', '0.0.0.0')]
 
 
 def key_pressed() -> bool | str:
@@ -925,6 +936,19 @@ async def async_key_pressed() -> str | None:
     except KeyboardInterrupt:
             return None
 
+def print_network_info():
+    interfaces = get_all_broadcast_addresses()
+    print("+-----------------------------------------------+")
+    print("|            Active Network Interfaces          |")
+    print("+-----------------------------------------------+")
+    for brd, own_ip in interfaces:
+        print(f"|  Own IP : {own_ip:<20}  Bcast: {brd:<15}|")
+    print("+-----------------------------------------------+")
+    if len(interfaces) > 1:
+        print("  [i] Multiple interfaces detected.")
+        print("      Broadcasting on ALL of them for LAN discovery.")
+    print()
+
 def generate_username():
     adj = random.choice(adjectives)
     noun = random.choice(nouns)
@@ -954,6 +978,7 @@ def cls():
 if __name__ == "__main__":
     USERNAME = generate_username()
     cls()
+    print_network_info()
     
     xender = XenderController(USERNAME)
 
@@ -992,6 +1017,6 @@ if __name__ == "__main__":
                 xender.model.ctrl_conn.close()
             break
 
-    print("Thank you for using zender!")            
+    print(Back.GREEN + "Thank you for using zender!")            
     sys.exit()
 
